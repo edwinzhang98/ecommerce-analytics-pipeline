@@ -20,7 +20,7 @@ Four layers, one DuckDB schema each. `dbt/macros/generate_schema_name.sql` drops
 - **Raw is lossless.** VARCHAR keeps leading zeros (23,995 customer records have a zip prefix starting with 0), and no bad value can abort a load. The audit catches file traps: the reviews file has 104,719 physical lines but 99,224 rows, because comments contain line breaks (DQ-18).
 - **Logic lives once, in intermediate.** `int_orders_joined` is the order-grain backbone of `fct_orders`, `fct_order_items` and, through `int_customers_aggregated_to_persons`, `dim_customers`. The wide marts read core marts only.
 - **Marts are the interface.** Only marts are `access: public` (upstream keeps dbt's default, `protected`), and contracts pin the names and types of all 188 mart columns, all documented. Business numbers in `analyses/`, the app and the report come from marts; only the profiling SQL in `sql/data_quality/` and the `*_on_raw.sql` reproductions in `sql/metrics/` read raw.
-- **Views upstream, tables for marts.** Views cost nothing to build and always reflect raw. Marts are tables because they are what gets queried, constraints and the incremental model need a table, and the parquet export reads them. The full `dbt build` (24 models, 4 seeds, 1 snapshot, 300 tests) takes 8.9 s.
+- **Views upstream, tables for marts.** Views cost nothing to build and always reflect raw. Marts are tables because they are what gets queried, constraints and the incremental model need a table, and the parquet export reads them. The full `dbt build` (24 models, 4 seeds, 1 snapshot, 300 tests) takes under 20 seconds.
 - **Stack:** DuckDB 2.0.0, dbt Core 1.12.6, dbt-duckdb 1.11.1, Python 3.12.
 
 ## Alternatives considered
@@ -37,7 +37,7 @@ Four layers, one DuckDB schema each. `dbt/macros/generate_schema_name.sql` drops
 Positive:
 
 - One place to query, with grain guaranteed per layer; a test requires six query paths to agree on net orders (ADR 0002).
-- 296 data tests and 4 unit tests run inside the 8.9 s build, cheap enough for every change.
+- 296 data tests and 4 unit tests run inside a build of under 20 seconds, cheap enough for every change.
 - The same load and build run locally (`make all`) and in CI on a synthetic fixture, without credentials.
 
 Negative and trade-offs:

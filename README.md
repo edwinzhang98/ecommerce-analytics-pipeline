@@ -24,20 +24,22 @@ On the raw tables, "how many orders?" returns **117,601**, **99,441** or **96,47
 1. **One order number, enforced by tests.**
    - **98,207 net orders** (placed minus canceled and unavailable) is the official KPI. **Placed (99,441)** and
      **delivered (96,478)** are published under their own names.
-   - Six independent query paths must return the same count, including one computed straight from staging and the
-     status seed, skipping every intermediate and mart model. A dbt test fails the build if they ever disagree.
+   - Six query paths must return the same count; one of them is computed straight from staging and the status
+     seed, skipping every intermediate and mart model. A dbt test fails the build if they ever disagree. (The app's
+     Overview shows the five analyst-style paths; the test adds the sixth.)
 2. **Trust is tested, not claimed.**
    - Profiling found **21 raw-data issues in 9 classes**: per-order customer ids, shared review ids, payments ≠
      items + freight, contradictory timestamps, partial months and more. Each one is handled in the models and
      documented.
    - **300 tests** run on every build (296 data tests + 4 unit tests). **24** of them are *known-issue baselines*:
      they pass at today's count, warn if it grows and fail if it explodes.
-   - CI plants every issue in a synthetic dataset and checks that each test catches it.
+   - CI plants every issue that has a known-issue test in a synthetic dataset, and checks that each test catches it.
+     DQ-05 and DQ-21 have no test and are documented only.
 3. **The marts support real analysis.** These are associations in 2016-2018 data, not causal effects.
    - **Delivery and reviews.** Late deliveries get a 1-2 star review **62.4%** of the time vs **9.3%** on time.
      Across states, late rate and bad-review rate correlate at r = 0.94; AL, MA and SE are late most often. RJ is
-     the one state whose bad reviews clearly exceed what its lateness predicts, and it has the second-most late
-     deliveries.
+     the one state whose bad reviews clearly exceed what its lateness and delivery times predict (PA's and BA's
+     excess is explained by slower deliveries), and it has the second-most late deliveries.
    - **Repeat purchase.** Only **2.17%** of customers ever buy again on a different day. Counting orders instead
      of purchase days would say 3.04%, because some checkouts split into several orders.
    - **Sellers.** The top 10% of sellers hold **66.7%** of net GMV. When a seller misses its own handover
@@ -72,7 +74,7 @@ The one-page business memo is [docs/readout.md](docs/readout.md). The full write
   `dim_customers` (with RFM fields), `dim_products`, `dim_sellers`, `dim_date`, plus two wide tables,
   `customer_360` and `seller_scorecard`.
 - **Also in the project:**
-  - 4 seeds, the order-status definition among them;
+  - 4 seeds, the order-status definition among them (plus the evaluator-exceptions seed used by `make lint`);
   - an SCD2 snapshot of order status;
   - a MetricFlow semantic layer with 11 metrics;
   - exposures for the app and the analyses.
@@ -147,8 +149,10 @@ Recorded as ADRs in [docs/adr/](docs/adr/):
 
 - **Hard rules** (error on any failure): keys, not-null, accepted values, fact-to-dimension relationships, amounts
   ≥ 0, event order (nothing delivered before it was bought), grain guards, reconciliation of item, order, customer
-  and seller GMV, load audit. Plus 6 custom generic tests, 7 singular tests and 4 unit tests.
-- **Known-issue baselines.** 24 tests whose failing rows are stored in a `test_failures` schema for inspection.
+  and seller GMV, and the load audit. They use 6 custom generic test types and 3 singular tests (the six-path
+  order count, category translations, complete-month volume). 4 unit tests cover the trickiest transformations.
+- **Known-issue baselines.** 24 tests (20 generic, 4 singular) whose failing rows are stored in a `test_failures`
+  schema for inspection.
 - **CI** ([ci.yml](.github/workflows/ci.yml)) runs on every pull request and push:
   - strict parse (deprecations are errors);
   - synthetic fixture, then load, then `dbt build`;
@@ -191,8 +195,8 @@ marts when you move the controls.
 
 ## Limitations
 
-- **Historical, static data.** 2016-2018 from one marketplace. Recency is measured against the last purchase
-  date in the data.
+- **Historical, static data.** 2016-2018 from one marketplace. Recency is measured against the last
+  net-order purchase date in the data (2018-09-03).
 - **Associations, not causes.** The business findings need an experiment or a holdout before anyone acts at scale.
 - **No refunds.** The source has no refund table, so revenue means gross merchandise value.
 - **Net orders include 1,729 open orders.** Some old "shipped" orders will probably never be delivered (ADR 0002).

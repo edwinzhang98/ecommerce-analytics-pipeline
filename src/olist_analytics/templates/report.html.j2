@@ -186,7 +186,7 @@
 <ul>
   <li><b>Repeat buying is rare.</b> {{ n.repeat|pct(2) }} of customers ever buy again on a different day.</li>
   <li><b>The definition matters.</b> Counting split checkouts as repeats would report {{ n.repeat_orders|pct(2) }}.</li>
-  <li><b>Return is slow.</b> Repeaters take a median of {{ '%.0f'|format(n.median_second) }} days, and that figure is biased toward quick returns. For the customers observed for a full year it is 125 days (<code>analyses/q2_repeat_purchase.md</code>).</li>
+  <li><b>Return is slow.</b> Repeaters take a median of {{ '%.0f'|format(n.median_second) }} days, and that figure is biased toward quick returns. For the customers observed for a full year it is {{ '%.0f'|format(n.median_full_year) }} days among those who came back within the year (<code>analyses/q2_repeat_purchase.md</code>).</li>
   <li><b>Fair cohort comparison.</b> Cohorts are compared only once every customer has had the full window to return.</li>
   <li><b>First experience.</b> Late or badly reviewed first orders go with lower repurchase, but the intervals are wide: a hypothesis to test, not a result.</li>
 </ul>
@@ -233,7 +233,7 @@
 <tr><td>Analytics Lead + Finance</td><td>Adopt net orders as the headline order KPI; report placed and delivered under their own names</td><td>One order number in every report</td><td>Conflicting order counts in business reviews: zero; the 6-path dbt test stays green</td><td>Finance may prefer delivered orders: a status-seed change plus a full refresh (ADR 0002)</td></tr>
 <tr><td>Analysts</td><td>Query the marts only; retire raw-table queries and dashboards</td><td>No fan-out or definition errors</td><td>Share of dashboards reading marts</td><td>Migration effort for legacy reports</td></tr>
 <tr><td>Logistics</td><td>Review carriers and routes in RJ first (second-most late deliveries, and the one state with clearly more bad reviews than its lateness predicts); in {{ n.worst_states }} make the delivery estimate route-specific</td><td>Fewer late deliveries; at most ~53 fewer bad reviews per 100 late deliveries avoided (upper bound)</td><td>Monthly late and bad-review rate, RJ vs MG and SP; the Northeast before vs after</td><td>RJ does worse even on time; a later promise can cost sales</td></tr>
-<tr><td>Seller management</td><td>Work the {{ n.risk_sellers }} sellers above both thresholds, the 15 that clearly exceed both first</td><td>Lower late-handover rates</td><td>Their rates vs flagged sellers not yet contacted</td><td>Some flags are chance; 72% of late deliveries follow an on-time handover</td></tr>
+<tr><td>Seller management</td><td>Work the {{ n.risk_sellers }} sellers above both thresholds, the {{ n.clear_sellers }} that clearly exceed both first</td><td>Lower late-handover rates</td><td>Their rates vs flagged sellers not yet contacted</td><td>Some flags are chance; {{ n.late_after_ok_handover|pct(0) }} of late deliveries follow an on-time handover</td></tr>
 <tr><td>CRM</td><td>Pilot a second-purchase offer 30-90 days after the first delivery, with a random no-offer group</td><td>A measured, not assumed, lift on a ~2% base</td><td>180-day repeat rate, pilot vs no-offer group</td><td>A 2% base needs a large pilot</td></tr>
 <tr><td>Data platform</td><td>Ask the source owner for refunds, quantities and time zones</td><td>Net revenue and true unit counts</td><td>New source tables available and tested</td><td>Depends on the source team's roadmap</td></tr>
 </table></div>

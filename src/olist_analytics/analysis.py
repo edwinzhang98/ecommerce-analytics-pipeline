@@ -50,6 +50,50 @@ def seller_points(con: duckdb.DuckDBPyConnection, min_seller_orders: int) -> pd.
     ).df()
 
 
+def repeat_timing_full_year(con: duckdb.DuckDBPyConnection) -> dict:
+    """Time to the second purchase for customers observed for at least a year (no right-censoring):
+    first net order on or before rfm_reference_date - 365 days; median among those back within a year."""
+    customers, back, median = con.execute(
+        """
+        with observed as (
+            select days_to_second_purchase
+            from marts.customer_360
+            where has_net_order
+              and cast(first_net_order_at as date) <= rfm_reference_date - interval 365 day
+        )
+        select count(*), count(*) filter (where days_to_second_purchase <= 365),
+               median(days_to_second_purchase) filter (where days_to_second_purchase <= 365)
+        from observed
+        """
+    ).fetchone()
+    return {"customers": customers, "back_within_year": back, "median_days": median}
+
+
+def clear_flagged_sellers(con: duckdb.DuckDBPyConnection, min_seller_orders: int, late_handover_threshold_pct: float,
+                          bad_review_threshold_pct: float) -> dict:
+    """Flagged sellers (above both thresholds) and how many stay above both at the lower bound of their
+    95% Wilson intervals, i.e. clearly above after allowing for chance."""
+    flagged, clear = con.execute(
+        """
+        with flagged as (
+            select handed_over_orders as n1, late_handover_rate as p1, reviewed_orders as n2, bad_review_rate as p2
+            from marts.seller_scorecard
+            where net_orders >= $min_orders
+              and 100 * late_handover_rate > $late_pct and 100 * bad_review_rate > $bad_pct
+        ),
+        bounds as (
+            select
+                (p1 + 1.96^2 / (2 * n1) - 1.96 * sqrt(p1 * (1 - p1) / n1 + 1.96^2 / (4 * n1 * n1))) / (1 + 1.96^2 / n1) as lo1,
+                (p2 + 1.96^2 / (2 * n2) - 1.96 * sqrt(p2 * (1 - p2) / n2 + 1.96^2 / (4 * n2 * n2))) / (1 + 1.96^2 / n2) as lo2
+            from flagged
+        )
+        select count(*), count(*) filter (where 100 * lo1 > $late_pct and 100 * lo2 > $bad_pct) from bounds
+        """,
+        {"min_orders": min_seller_orders, "late_pct": late_handover_threshold_pct, "bad_pct": bad_review_threshold_pct},
+    ).fetchone()
+    return {"flagged": flagged, "clearly_above_both": clear}
+
+
 def payment_mismatch_curve(con: duckdb.DuckDBPyConnection) -> pd.DataFrame:
     """Orders whose payments differ from items + freight by more than each tolerance (Raw Data Issues page)."""
     return con.execute(

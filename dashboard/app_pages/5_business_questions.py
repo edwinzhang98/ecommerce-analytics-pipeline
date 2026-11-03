@@ -29,6 +29,7 @@ def run_q3(min_orders: int, late_pct: int, bad_pct: int):
     res = analysis.q3_seller_performance(ui.con(), min_seller_orders=min_orders,
                                          late_handover_threshold_pct=late_pct, bad_review_threshold_pct=bad_pct)
     res["points"] = analysis.seller_points(ui.con(), min_orders)
+    res["clear"] = analysis.clear_flagged_sellers(ui.con(), min_orders, late_pct, bad_pct)
     return res
 
 
@@ -124,7 +125,9 @@ with q3_tab:
     risk = quad.loc[quad.index.str.startswith("1.")]
     m1, m2, m3 = st.columns(3)
     m1.metric("GMV held by the top 10% of sellers", charts.pct(tiers.loc[10, "gmv_share_pct"], 0))
-    m2.metric("Sellers above both thresholds", int(risk["sellers"].sum()) if len(risk) else 0)
+    m2.metric("Sellers above both thresholds", int(risk["sellers"].sum()) if len(risk) else 0,
+              help=f"{q3['clear']['clearly_above_both']} of them stay above both at the lower bound of their 95% "
+                   "intervals, i.e. clearly above after allowing for chance: start with those.")
     m3.metric("…their share of marketplace GMV",
               charts.pct(risk["share_of_marketplace_gmv_pct"].sum() if len(risk) else 0))
     left, right = st.columns(2)

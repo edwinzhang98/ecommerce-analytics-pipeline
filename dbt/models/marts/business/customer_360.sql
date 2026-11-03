@@ -1,6 +1,7 @@
 {#
     customer_360 — one wide row per person (customer_unique_id) for CRM and analysts.
-    Inherits every dim_customers column, then adds behaviour from the facts.
+    Repeats every dim_customers column (listed explicitly, so the enforced contract never breaks
+    silently when the dimension grows), then adds behaviour from the facts.
     All behavioural metrics use net orders only (canceled / unavailable excluded),
     except canceled_or_unavailable_orders.
 #}
@@ -149,7 +150,27 @@ category_preference as (
 final as (
 
     select
-        customers.*,
+        -- every dim_customers column, listed so a new dimension column is an explicit choice here
+        customers.customer_unique_id,
+        customers.customer_zip_code_prefix,
+        customers.customer_city,
+        customers.customer_state,
+        customers.customer_state_name,
+        customers.customer_region,
+        customers.customer_latitude,
+        customers.customer_longitude,
+        customers.orders_placed,
+        customers.first_order_at,
+        customers.first_net_order_at,
+        customers.last_net_order_at,
+        customers.purchase_days,
+        customers.has_net_order,
+        customers.is_repeat_customer,
+        customers.rfm_reference_date,
+        customers.recency_days,
+        customers.frequency_orders,
+        customers.monetary_gmv_brl,
+        customers.avg_order_value_brl,
 
         -- lifecycle
         cast(

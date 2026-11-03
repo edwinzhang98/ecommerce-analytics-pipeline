@@ -64,8 +64,9 @@ if inc:
         f"Simulated an extract as of **{inc['cutoff']}**, then the full data. The incremental run added the new "
         f"orders and updated **{ui.fmt_int(a_['older_rows_whose_status_changed'])}** rows whose order changed status. "
         f"Running it again changed nothing. A full rebuild produced the identical table (row-level checksum). "
-        f"In the late-data scenario, {b_['held_back_orders']} orders arriving outside the lookback window were "
-        "missed on purpose. The grain test failed as designed, and a full refresh repaired it. "
+        f"In the late-data scenario, {b_['held_back_orders']} orders ({ui.fmt_int(b_['rows_missed_by_incremental'])} "
+        "item rows) arriving outside the lookback window were missed on purpose. The grain test failed as designed, "
+        "and a full refresh repaired it. "
         f"The snapshot recorded a second version for {ui.fmt_int(a_['orders_with_status_history_in_snapshot'])} orders."
     )
 else:

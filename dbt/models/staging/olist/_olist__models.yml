@@ -17,8 +17,8 @@ models:
           name: purchase_not_in_the_future
           arguments:
             # guards the incremental watermark of fct_order_items: one bad future timestamp
-            # would otherwise freeze its window
-            expression: "order_purchased_at <= _loaded_at"
+            # would otherwise freeze its window. Purchase time is local (Sao Paulo), _loaded_at is UTC.
+            expression: "timezone('UTC', timezone('America/Sao_Paulo', order_purchased_at)) <= _loaded_at"
       - dbt_utils.expression_is_true:
           name: known_issue__canceled_orders_with_delivery_timestamp
           arguments:

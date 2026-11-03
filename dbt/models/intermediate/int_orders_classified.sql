@@ -39,7 +39,7 @@ classified as (
         cast(orders.order_purchased_at as date) as order_purchase_date,
 
         -- delivery metrics are defined for delivered orders with a delivery timestamp only
-        orders.order_status = 'delivered'
+        status_mapping.order_status_group = 'delivered'
             and orders.order_delivered_to_customer_at is not null as has_delivery_metrics
 
     from orders

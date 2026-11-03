@@ -194,49 +194,53 @@ def architecture_svg(stats: dict) -> str:
 def star_schema_svg(rows: dict | None = None) -> str:
     """The marts as a star schema: tables (with grain and row count) and the only joins analysts need."""
     rows = rows or {}
+    w, h = 230, 62
+    left, mid, right = 30, 465, 900
     boxes = {
-        "fct_order_items": (410, 24, "one row per unit sold", True),
-        "dim_products": (40, 24, "one row per product", False),
-        "dim_sellers": (780, 24, "one row per seller", False),
-        "fct_orders": (410, 214, "one row per order", True),
-        "dim_customers": (40, 214, "one row per person", False),
-        "dim_date": (780, 214, "one row per day", False),
-        "customer_360": (40, 360, "wide: one row per person", False),
-        "seller_scorecard": (780, 120, "wide: one row per seller", False),
+        "dim_products": (left, 24, "one row per product", False),
+        "fct_order_items": (mid, 24, "one row per unit sold", True),
+        "dim_sellers": (right, 24, "one row per seller", False),
+        "seller_scorecard": (right, 128, "wide: one row per seller", False),
+        "dim_customers": (left, 232, "one row per person", False),
+        "fct_orders": (mid, 232, "one row per order", True),
+        "dim_date": (right, 232, "one row per day", False),
+        "customer_360": (left, 352, "wide: one row per person", False),
     }
-    w, h = 250, 62
-    def centre(name):
+
+    def centre(name: str) -> tuple[float, float]:
         x, y, *_ = boxes[name]
         return x + w / 2, y + h / 2
-    edges = [("fct_order_items", "fct_orders", "order_id"), ("fct_order_items", "dim_products", "product_id"),
+
+    joins = [("fct_order_items", "fct_orders", "order_id"), ("fct_order_items", "dim_products", "product_id"),
              ("fct_order_items", "dim_sellers", "seller_id"), ("fct_orders", "dim_customers", "customer_unique_id"),
-             ("fct_orders", "dim_date", "order_purchase_date = date_day")]
-    soft = [("dim_customers", "customer_360"), ("dim_sellers", "seller_scorecard")]
-    parts = []
-    for a, b, label in edges:
+             ("fct_orders", "dim_date", "order_purchase_date")]
+    same_grain = [("dim_customers", "customer_360"), ("dim_sellers", "seller_scorecard")]
+    lines, shapes, labels = [], [], []
+    for a, b, label in joins:
         (x1, y1), (x2, y2) = centre(a), centre(b)
-        parts.append(f'<line x1="{x1}" y1="{y1}" x2="{x2}" y2="{y2}" stroke="{MUTED}" stroke-width="1.5"/>')
+        lines.append(f'<line x1="{x1}" y1="{y1}" x2="{x2}" y2="{y2}" stroke="{MUTED}" stroke-width="1.5"/>')
         mx, my = (x1 + x2) / 2, (y1 + y2) / 2
-        parts.append(f'<rect x="{mx - len(label) * 3.6 - 6}" y="{my - 11}" width="{len(label) * 7.2 + 12}" height="20" '
-                     f'rx="4" fill="{SURFACE}"/>')
-        parts.append(f'<text x="{mx}" y="{my + 4}" text-anchor="middle" font-size="12" fill="{INK_2}">{label}</text>')
-    for a, b in soft:
+        half = len(label) * 3.7 + 7
+        labels.append(f'<rect x="{mx - half}" y="{my - 11}" width="{2 * half}" height="21" rx="4" fill="{SURFACE}" '
+                      f'stroke="{GRID}"/><text x="{mx}" y="{my + 4}" text-anchor="middle" font-size="12" '
+                      f'fill="{INK_2}">{label}</text>')
+    for a, b in same_grain:
         (x1, y1), (x2, y2) = centre(a), centre(b)
-        parts.append(f'<line x1="{x1}" y1="{y1}" x2="{x2}" y2="{y2}" stroke="{AXIS}" stroke-width="1.5" '
+        lines.append(f'<line x1="{x1}" y1="{y1}" x2="{x2}" y2="{y2}" stroke="{AXIS}" stroke-width="1.5" '
                      f'stroke-dasharray="4 4"/>')
     for name, (x, y, grain, is_fact) in boxes.items():
         fill, stroke = ("#eef4fc", BLUE) if is_fact else ("#ffffff", AXIS)
         n = rows.get(name)
-        sub = f"{grain} · {n:,} rows" if n else grain
-        parts.append(f'<rect x="{x}" y="{y}" width="{w}" height="{h}" rx="8" fill="{fill}" stroke="{stroke}" stroke-width="1.5"/>'
-                     f'<text x="{x + w / 2}" y="{y + 26}" text-anchor="middle" font-size="15" font-weight="600" fill="{INK}">{name}</text>'
-                     f'<text x="{x + w / 2}" y="{y + 46}" text-anchor="middle" font-size="12" fill="{INK_2}">{sub}</text>')
+        sub = f"{grain} · {n:,}" if n else grain
+        shapes.append(f'<rect x="{x}" y="{y}" width="{w}" height="{h}" rx="8" fill="{fill}" stroke="{stroke}" stroke-width="1.5"/>'
+                      f'<text x="{x + w / 2}" y="{y + 26}" text-anchor="middle" font-size="15" font-weight="600" fill="{INK}">{name}</text>'
+                      f'<text x="{x + w / 2}" y="{y + 46}" text-anchor="middle" font-size="12" fill="{INK_2}">{sub}</text>')
     font = FONT.replace(chr(34), chr(39))
-    return (f'<svg viewBox="0 0 1070 440" width="100%" role="img" xmlns="http://www.w3.org/2000/svg" '
-            f'aria-label="Star schema of the marts with join keys" style="font-family:{font};max-width:1070px">'
-            + "".join(parts) +
-            f'<text x="40" y="436" font-size="12" fill="{MUTED}">Solid lines: joins (many rows to one). '
-            f'Dashed: wide tables at the same grain as their dimension. Blue: facts.</text></svg>')
+    return (f'<svg viewBox="0 0 1160 448" width="100%" role="img" xmlns="http://www.w3.org/2000/svg" '
+            f'aria-label="Star schema of the marts with join keys" style="font-family:{font};max-width:1160px">'
+            + "".join(lines) + "".join(shapes) + "".join(labels) +
+            f'<text x="{left}" y="442" font-size="12" fill="{MUTED}">Solid lines: joins on the labelled key (many rows '
+            f'to one). Dashed: wide table at the same grain as its dimension. Blue: facts. Numbers: rows.</text></svg>')
 
 
 # ----------------------------------------------------------------------------- raw data issues

@@ -2,312 +2,326 @@
 # Contracts enforced; reconciliation tests tie them back to fct_orders.
 
 models:
-- name: customer_360
-  description: '**One wide row per person (`customer_unique_id`)** for CRM and analysts: every `dim_customers` column
-    plus lifecycle stage, acquisition cohort, time to second purchase, basket, payment, delivery and review experience.
-    Behavioural metrics use net orders only. Built from the core marts, so its numbers reconcile with them.'
-  config:
-    contract:
-      enforced: true
-    meta:
-      grain: one row per person (customer_unique_id)
-      owner: analytics-engineering
-  data_tests:
-  - row_count_matches:
-      name: customer_360_has_one_row_per_person
-      arguments:
-        compare_model: ref('dim_customers')
-  columns:
-  - name: customer_unique_id
-    description: '{{ doc(''customer_unique_id'') }}'
-    data_type: varchar
-    constraints:
-    - type: not_null
-    - type: primary_key
+  - name: customer_360
+    description: >-
+      **One wide row per person (`customer_unique_id`)** for CRM and analysts: every `dim_customers` column
+      plus lifecycle stage, acquisition cohort, time to second purchase, basket, payment, delivery and
+      review experience. Behavioural metrics use net orders only. Built from the core marts, so its numbers
+      reconcile with them.
+    config:
+      contract:
+        enforced: true
+      meta:
+        grain: one row per person (customer_unique_id)
+        owner: analytics-engineering
     data_tests:
-    - unique
-    - not_null
-  - name: customer_zip_code_prefix
-    description: '{{ doc(''zip_code_prefix'') }} From the most recent order.'
-    data_type: varchar
-  - name: customer_city
-    description: City of the most recent order (lower-case, no accents).
-    data_type: varchar
-  - name: customer_state
-    description: '{{ doc(''state_code'') }}'
-    data_type: varchar
-  - name: customer_state_name
-    description: State name.
-    data_type: varchar
-  - name: customer_region
-    description: Macro-region (North, Northeast, Center-West, Southeast, South).
-    data_type: varchar
-  - name: customer_latitude
-    description: Median latitude of the customer's zip prefix (null when the prefix is not in the geolocation file).
-    data_type: double
-  - name: customer_longitude
-    description: Median longitude of the customer's zip prefix.
-    data_type: double
-  - name: orders_placed
-    description: Orders placed by the person in any status.
-    data_type: integer
-  - name: first_order_at
-    description: First order in any status. {{ doc('local_timestamp') }}
-    data_type: timestamp
-  - name: first_net_order_at
-    description: First net order. Null when the person has none.
-    data_type: timestamp
-  - name: last_net_order_at
-    description: Most recent net order.
-    data_type: timestamp
-  - name: purchase_days
-    description: 'Distinct calendar days with a net order. Used for repeat status because one checkout can be
-      split into several orders in the same second.
-
-      '
-    data_type: integer
-  - name: has_net_order
-    description: True when the person has at least one net order (not canceled or unavailable).
-    data_type: boolean
-  - name: is_repeat_customer
-    description: True when the person bought on at least 2 different days (net orders).
-    data_type: boolean
-  - name: rfm_reference_date
-    description: The "today" used for recency, i.e. the last net-order purchase date in the data (the extract is historical).
-    data_type: date
-  - name: recency_days
-    description: 'RFM recency: days from the last net order to `rfm_reference_date`. Null without net orders.'
-    data_type: integer
-  - name: frequency_orders
-    description: 'RFM frequency: number of net orders.'
-    data_type: integer
-  - name: monetary_gmv_brl
-    description: 'RFM monetary: GMV (items + freight) of the person''s net orders, in BRL.'
-    data_type: decimal(18,2)
-  - name: avg_order_value_brl
-    description: '`monetary_gmv_brl / frequency_orders`. Null without net orders.'
-    data_type: decimal(18,2)
-  - name: customer_lifecycle_stage
-    description: '`repeat` (bought on 2+ days), `one_time`, or `no_net_order` (only canceled / unavailable orders).'
-    data_type: varchar
+      - row_count_matches:
+          name: customer_360_has_one_row_per_person
+          arguments:
+            compare_model: ref('dim_customers')
+    columns:
+      - name: customer_unique_id
+        description: "{{ doc('customer_unique_id') }}"
+        data_type: varchar
+        constraints:
+          - type: not_null
+          - type: primary_key
+        data_tests:
+          - unique
+          - not_null
+      - name: customer_zip_code_prefix
+        description: "{{ doc('zip_code_prefix') }} From the most recent order."
+        data_type: varchar
+      - name: customer_city
+        description: City of the most recent order (lower-case, no accents).
+        data_type: varchar
+      - name: customer_state
+        description: "{{ doc('state_code') }}"
+        data_type: varchar
+      - name: customer_state_name
+        description: State name.
+        data_type: varchar
+      - name: customer_region
+        description: Macro-region (North, Northeast, Center-West, Southeast, South).
+        data_type: varchar
+      - name: customer_latitude
+        description: >-
+          Median latitude of the customer's zip prefix (null when the prefix is not in the geolocation
+          file).
+        data_type: double
+      - name: customer_longitude
+        description: Median longitude of the customer's zip prefix.
+        data_type: double
+      - name: orders_placed
+        description: Orders placed by the person in any status.
+        data_type: integer
+      - name: first_order_at
+        description: "First order in any status. {{ doc('local_timestamp') }}"
+        data_type: timestamp
+      - name: first_net_order_at
+        description: First net order. Null when the person has none.
+        data_type: timestamp
+      - name: last_net_order_at
+        description: Most recent net order.
+        data_type: timestamp
+      - name: purchase_days
+        description: >-
+          Distinct calendar days with a net order. Used for repeat status because one checkout can be
+          split into several orders in the same second.
+        data_type: integer
+      - name: has_net_order
+        description: True when the person has at least one net order (not canceled or unavailable).
+        data_type: boolean
+      - name: is_repeat_customer
+        description: True when the person bought on at least 2 different days (net orders).
+        data_type: boolean
+      - name: rfm_reference_date
+        description: >-
+          The "today" used for recency, i.e. the last net-order purchase date in the data (the extract
+          is historical).
+        data_type: date
+      - name: recency_days
+        description: >-
+          RFM recency: days from the last net order to `rfm_reference_date`. Null without net orders.
+        data_type: integer
+      - name: frequency_orders
+        description: "RFM frequency: number of net orders."
+        data_type: integer
+      - name: monetary_gmv_brl
+        description: "RFM monetary: GMV (items + freight) of the person's net orders, in BRL."
+        data_type: decimal(18,2)
+      - name: avg_order_value_brl
+        description: "`monetary_gmv_brl / frequency_orders`. Null without net orders."
+        data_type: decimal(18,2)
+      - name: customer_lifecycle_stage
+        description: >-
+          `repeat` (bought on 2+ days), `one_time`, or `no_net_order` (only canceled / unavailable orders).
+        data_type: varchar
+        data_tests:
+          - accepted_values:
+              arguments:
+                values:
+                  - repeat
+                  - one_time
+                  - no_net_order
+          - not_null
+      - name: first_net_order_month
+        description: "Month of the first net order: the acquisition cohort."
+        data_type: date
+      - name: days_to_second_purchase
+        description: Days between the first and second purchase day. Null for one-time customers.
+        data_type: integer
+        data_tests:
+          - dbt_utils.accepted_range:
+              arguments:
+                min_value: 1
+      - name: canceled_or_unavailable_orders
+        description: Orders of the person that were canceled or unavailable.
+        data_type: integer
+        data_tests:
+          - not_null
+      - name: total_items
+        description: Units bought across net orders.
+        data_type: integer
+        data_tests:
+          - not_null
+      - name: distinct_products
+        description: Distinct products bought.
+        data_type: integer
+      - name: distinct_categories
+        description: Distinct product categories bought.
+        data_type: integer
+      - name: top_category
+        description: "Category with the most units bought (ties: higher GMV, then name)."
+        data_type: varchar
+      - name: lifetime_paid_brl
+        description: >-
+          Total paid across net orders in BRL (includes card installment interest; see ADR 0004).
+        data_type: decimal(18,2)
+        data_tests:
+          - not_null
+      - name: preferred_payment_type
+        description: Most frequent primary payment method across net orders.
+        data_type: varchar
+      - name: has_used_voucher
+        description: True when any net order used a voucher.
+        data_type: boolean
+      - name: max_payment_installments
+        description: Largest installment count chosen on any net order.
+        data_type: integer
+      - name: delivered_orders
+        description: Net orders with status delivered.
+        data_type: integer
+        data_tests:
+          - not_null
+      - name: late_delivery_orders
+        description: Delivered orders that arrived after the estimated date.
+        data_type: integer
+        data_tests:
+          - not_null
+      - name: late_delivery_rate
+        description: "`late_delivery_orders` / delivered orders with a delivery date."
+        data_type: double
+      - name: avg_delivery_days
+        description: Average calendar days from purchase to delivery.
+        data_type: double
+      - name: reviewed_orders
+        description: Net orders with a survey answer.
+        data_type: integer
+        data_tests:
+          - not_null
+      - name: avg_review_score
+        description: Average review score across reviewed net orders.
+        data_type: double
+      - name: bad_review_orders
+        description: Net orders with a bad (1-2 star) review.
+        data_type: integer
+        data_tests:
+          - not_null
+  - name: seller_scorecard
+    description: >-
+      **One wide row per seller** for the seller-management team: volume, GMV and concentration (rank,
+      share, cumulative share), fulfilment (late delivery, late handover vs the seller's shipping limit)
+      and review outcomes. Net orders only. Order-level outcomes (delivery, review) are attributed to
+      every seller in a multi-seller order (1.3% of orders). Rates on small sellers are noisy: filter
+      on `net_orders` before ranking.
+    config:
+      contract:
+        enforced: true
+      meta:
+        grain: one row per seller
+        owner: analytics-engineering
     data_tests:
-    - accepted_values:
-        arguments:
-          values:
-          - repeat
-          - one_time
-          - no_net_order
-    - not_null
-  - name: first_net_order_month
-    description: 'Month of the first net order: the acquisition cohort.'
-    data_type: date
-  - name: days_to_second_purchase
-    description: Days between the first and second purchase day. Null for one-time customers.
-    data_type: integer
-    data_tests:
-    - dbt_utils.accepted_range:
-        arguments:
-          min_value: 1
-  - name: canceled_or_unavailable_orders
-    description: Orders of the person that were canceled or unavailable.
-    data_type: integer
-    data_tests:
-    - not_null
-  - name: total_items
-    description: Units bought across net orders.
-    data_type: integer
-    data_tests:
-    - not_null
-  - name: distinct_products
-    description: Distinct products bought.
-    data_type: integer
-  - name: distinct_categories
-    description: Distinct product categories bought.
-    data_type: integer
-  - name: top_category
-    description: 'Category with the most units bought (ties: higher GMV, then name).'
-    data_type: varchar
-  - name: lifetime_paid_brl
-    description: Total paid across net orders in BRL (includes card installment interest; see ADR 0004).
-    data_type: decimal(18,2)
-    data_tests:
-    - not_null
-  - name: preferred_payment_type
-    description: Most frequent primary payment method across net orders.
-    data_type: varchar
-  - name: has_used_voucher
-    description: True when any net order used a voucher.
-    data_type: boolean
-  - name: max_payment_installments
-    description: Largest installment count chosen on any net order.
-    data_type: integer
-  - name: delivered_orders
-    description: Net orders with status delivered.
-    data_type: integer
-    data_tests:
-    - not_null
-  - name: late_delivery_orders
-    description: Delivered orders that arrived after the estimated date.
-    data_type: integer
-    data_tests:
-    - not_null
-  - name: late_delivery_rate
-    description: '`late_delivery_orders` / delivered orders with a delivery date.'
-    data_type: double
-  - name: avg_delivery_days
-    description: Average calendar days from purchase to delivery.
-    data_type: double
-  - name: reviewed_orders
-    description: Net orders with a survey answer.
-    data_type: integer
-    data_tests:
-    - not_null
-  - name: avg_review_score
-    description: Average review score across reviewed net orders.
-    data_type: double
-  - name: bad_review_orders
-    description: Net orders with a bad (1-2 star) review.
-    data_type: integer
-    data_tests:
-    - not_null
-- name: seller_scorecard
-  description: '**One wide row per seller** for the seller-management team: volume, GMV and concentration (rank,
-    share, cumulative share), fulfilment (late delivery, late handover vs the seller''s shipping limit) and review
-    outcomes. Net orders only. Order-level outcomes (delivery, review) are attributed to every seller in a multi-seller
-    order (1.3% of orders). Rates on small sellers are noisy: filter on `net_orders` before ranking.'
-  config:
-    contract:
-      enforced: true
-    meta:
-      grain: one row per seller
-      owner: analytics-engineering
-  data_tests:
-  - row_count_matches:
-      name: seller_scorecard_has_one_row_per_seller
-      arguments:
-        compare_model: ref('dim_sellers')
-  - sum_matches:
-      name: seller_gmv_reconciles_with_net_order_gmv
-      arguments:
-        column_name: gmv_brl
-        compare_model: ref('fct_orders')
-        compare_column: order_gmv_brl
-        compare_filter: is_net_order
-        tolerance: 0
-  columns:
-  - name: seller_id
-    description: '{{ doc(''seller_id'') }}'
-    data_type: varchar
-    constraints:
-    - type: not_null
-    - type: primary_key
-    data_tests:
-    - unique
-    - not_null
-    - relationships:
-        arguments:
-          to: ref('dim_sellers')
-          field: seller_id
-  - name: seller_city
-    description: Cleaned city (from dim_sellers).
-    data_type: varchar
-  - name: seller_state
-    description: '{{ doc(''state_code'') }}'
-    data_type: varchar
-    data_tests:
-    - not_null
-  - name: seller_region
-    description: Macro-region.
-    data_type: varchar
-  - name: first_sale_date
-    description: Purchase date of the seller's first net order.
-    data_type: date
-  - name: last_sale_date
-    description: Purchase date of the seller's last net order.
-    data_type: date
-  - name: active_months
-    description: Distinct calendar months with at least one net-order sale.
-    data_type: integer
-    data_tests:
-    - not_null
-  - name: net_orders
-    description: Distinct net orders containing at least one of the seller's items.
-    data_type: integer
-    data_tests:
-    - not_null
-    - non_negative
-  - name: items_sold
-    description: Units sold in net orders.
-    data_type: integer
-    data_tests:
-    - not_null
-    - non_negative
-  - name: distinct_products
-    description: Distinct products sold.
-    data_type: integer
-  - name: top_category
-    description: Category with the most units sold.
-    data_type: varchar
-  - name: gmv_brl
-    description: GMV of the seller's items in net orders (price + freight), BRL.
-    data_type: decimal(18,2)
-    data_tests:
-    - not_null
-    - non_negative
-  - name: item_revenue_brl
-    description: Item prices only (excluding freight), BRL.
-    data_type: decimal(18,2)
-  - name: freight_brl
-    description: Freight on the seller's items, BRL.
-    data_type: decimal(18,2)
-  - name: avg_item_price_brl
-    description: Average unit price, BRL.
-    data_type: decimal(18,2)
-  - name: gmv_rank
-    description: Rank by GMV, 1 = largest (ties broken by seller_id).
-    data_type: integer
-    data_tests:
-    - unique
-    - not_null
-  - name: gmv_share
-    description: Seller GMV / marketplace GMV (net orders).
-    data_type: double
-    data_tests:
-    - dbt_utils.accepted_range:
-        arguments:
-          min_value: 0
-          max_value: 1
-  - name: cumulative_gmv_share
-    description: Running share of GMV when sellers are sorted by GMV descending (for Pareto analysis).
-    data_type: double
-    data_tests:
-    - dbt_utils.accepted_range:
-        arguments:
-          min_value: 0
-          max_value: 1.000001
-  - name: delivered_orders
-    description: Net orders containing the seller's items that were delivered.
-    data_type: integer
-  - name: late_delivery_rate
-    description: Share of delivered orders (with a delivery date) that arrived after the estimated date. Order-level
-      outcome attributed to each seller in the order.
-    data_type: double
-  - name: avg_delivery_days
-    description: Average purchase-to-delivery days of the seller's delivered orders.
-    data_type: double
-  - name: handed_over_orders
-    description: Single-seller orders with a carrier handover timestamp (denominator of late_handover_rate).
-    data_type: integer
-  - name: late_handover_rate
-    description: 'Seller SLA: share of handed-over single-seller orders that reached the carrier after the
-      seller''s shipping limit date. Null when the seller has no single-seller handovers.'
-    data_type: double
-  - name: reviewed_orders
-    description: Orders with a survey answer.
-    data_type: integer
-  - name: avg_review_score
-    description: Average review score of the seller's orders.
-    data_type: double
-  - name: bad_review_rate
-    description: Share of reviewed orders with a bad (1-2 star) review.
-    data_type: double
+      - row_count_matches:
+          name: seller_scorecard_has_one_row_per_seller
+          arguments:
+            compare_model: ref('dim_sellers')
+      - sum_matches:
+          name: seller_gmv_reconciles_with_net_order_gmv
+          arguments:
+            column_name: gmv_brl
+            compare_model: ref('fct_orders')
+            compare_column: order_gmv_brl
+            compare_filter: is_net_order
+            tolerance: 0
+    columns:
+      - name: seller_id
+        description: "{{ doc('seller_id') }}"
+        data_type: varchar
+        constraints:
+          - type: not_null
+          - type: primary_key
+        data_tests:
+          - unique
+          - not_null
+          - relationships:
+              arguments:
+                to: ref('dim_sellers')
+                field: seller_id
+      - name: seller_city
+        description: Cleaned city (from dim_sellers).
+        data_type: varchar
+      - name: seller_state
+        description: "{{ doc('state_code') }}"
+        data_type: varchar
+        data_tests:
+          - not_null
+      - name: seller_region
+        description: Macro-region.
+        data_type: varchar
+      - name: first_sale_date
+        description: Purchase date of the seller's first net order.
+        data_type: date
+      - name: last_sale_date
+        description: Purchase date of the seller's last net order.
+        data_type: date
+      - name: active_months
+        description: Distinct calendar months with at least one net-order sale.
+        data_type: integer
+        data_tests:
+          - not_null
+      - name: net_orders
+        description: Distinct net orders containing at least one of the seller's items.
+        data_type: integer
+        data_tests:
+          - not_null
+          - non_negative
+      - name: items_sold
+        description: Units sold in net orders.
+        data_type: integer
+        data_tests:
+          - not_null
+          - non_negative
+      - name: distinct_products
+        description: Distinct products sold.
+        data_type: integer
+      - name: top_category
+        description: Category with the most units sold.
+        data_type: varchar
+      - name: gmv_brl
+        description: GMV of the seller's items in net orders (price + freight), BRL.
+        data_type: decimal(18,2)
+        data_tests:
+          - not_null
+          - non_negative
+      - name: item_revenue_brl
+        description: Item prices only (excluding freight), BRL.
+        data_type: decimal(18,2)
+      - name: freight_brl
+        description: Freight on the seller's items, BRL.
+        data_type: decimal(18,2)
+      - name: avg_item_price_brl
+        description: Average unit price, BRL.
+        data_type: decimal(18,2)
+      - name: gmv_rank
+        description: Rank by GMV, 1 = largest (ties broken by seller_id).
+        data_type: integer
+        data_tests:
+          - unique
+          - not_null
+      - name: gmv_share
+        description: Seller GMV / marketplace GMV (net orders).
+        data_type: double
+        data_tests:
+          - dbt_utils.accepted_range:
+              arguments:
+                min_value: 0
+                max_value: 1
+      - name: cumulative_gmv_share
+        description: >-
+          Running share of GMV when sellers are sorted by GMV descending (for Pareto analysis).
+        data_type: double
+        data_tests:
+          - dbt_utils.accepted_range:
+              arguments:
+                min_value: 0
+                max_value: 1.000001
+      - name: delivered_orders
+        description: Net orders containing the seller's items that were delivered.
+        data_type: integer
+      - name: late_delivery_rate
+        description: >-
+          Share of delivered orders (with a delivery date) that arrived after the estimated date. Order-level
+          outcome attributed to each seller in the order.
+        data_type: double
+      - name: avg_delivery_days
+        description: Average purchase-to-delivery days of the seller's delivered orders.
+        data_type: double
+      - name: handed_over_orders
+        description: >-
+          Single-seller orders with a carrier handover timestamp (denominator of late_handover_rate).
+        data_type: integer
+      - name: late_handover_rate
+        description: >-
+          Seller SLA: share of handed-over single-seller orders that reached the carrier after the seller's
+          shipping limit date. Null when the seller has no single-seller handovers.
+        data_type: double
+      - name: reviewed_orders
+        description: Orders with a survey answer.
+        data_type: integer
+      - name: avg_review_score
+        description: Average review score of the seller's orders.
+        data_type: double
+      - name: bad_review_rate
+        description: Share of reviewed orders with a bad (1-2 star) review.
+        data_type: double

@@ -209,9 +209,9 @@ def export_lineage(artifacts: Path, out: Path) -> tuple[pd.DataFrame, pd.DataFra
     tests_per_node: Counter = Counter()
     for node in manifest["nodes"].values():
         if node["resource_type"] == "test":
-            target = node.get("attached_node") or next(iter(node["depends_on"]["nodes"]), None)
+            target = _test_target(node, manifest)  # same attribution as the test-results table
             if target:
-                tests_per_node[target] += 1
+                tests_per_node[target["unique_id"]] += 1
     for unit in manifest.get("unit_tests", {}).values():
         tests_per_node[f"model.olist_analytics.{unit.get('model')}"] += 1
 

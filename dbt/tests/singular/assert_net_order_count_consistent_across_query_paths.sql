@@ -1,6 +1,7 @@
 {#
     The original complaint, as a test: "three analysts got three different order counts".
-    Independent ways of counting net orders must agree:
+    Six different ways of counting net orders must agree. Paths 1-5 go through the marts;
+    path 6 skips every intermediate and mart model:
       1. fct_orders filtered on is_net_order (the documented way)
       2. the star join fct_orders x dim_customers x dim_date (proves the dimensions cannot fan out)
       3. monthly counts through dim_date, summed (proves no order falls outside the calendar)
@@ -40,7 +41,7 @@ paths as (
 
     union all
 
-    select '3. monthly net orders via dim_date, summed', sum(monthly_net_orders)
+    select '3. monthly net orders via dim_date, summed', coalesce(sum(monthly_net_orders), 0)
     from (
         select dim_date.year_month, count(*) as monthly_net_orders
         from fct_orders
@@ -52,7 +53,8 @@ paths as (
 
     union all
 
-    select '4. sum of dim_customers.frequency_orders', sum(frequency_orders)
+    -- coalesce: an empty table must give 0 (and fail), not NULL (which count(distinct) would ignore)
+    select '4. sum of dim_customers.frequency_orders', coalesce(sum(frequency_orders), 0)
     from {{ ref('dim_customers') }}
 
     union all

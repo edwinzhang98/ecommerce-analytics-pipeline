@@ -393,7 +393,7 @@ In the raw reconstruction of the dispute ([`01_three_analysts_on_raw.sql`](../sq
 | Flag, don't drop | 2,428 orders carry at least one flag; all 99,441 stay in `fct_orders` | `fct_orders.data_quality_flags` |
 | Incremental model equals a full refresh | First the extract as of 2018-07-01 (98,309 item rows), then the full extract. The incremental run, a rerun and a full refresh all give 112,650 rows with an identical checksum. Between the loads, 1,939 existing rows changed status; 1,344 of them were outside the 3-day lookback and were picked up by the open-order rule | [`check_incremental.py`](../scripts/check_incremental.py), [ADR 0005](adr/0005-incremental-fct-order-items.md) |
 | Late arrivals are detected | 25 orders (26 item rows) held back from the first load are missed by the incremental run. The grain test fails as designed, and a full refresh repairs the table | same |
-| Whole test suite | 300 of 300 pass: 296 data tests (24 of them known-issue baselines at today's counts) and 4 unit tests | last `dbt build`, 8.9 s |
+| Whole test suite | 300 of 300 pass: 296 data tests (24 of them known-issue baselines at today's counts) and 4 unit tests | last `dbt build`, under 20 s |
 
 Flag counts in `data_quality_flags` (an order can carry several; appendix A12):
 

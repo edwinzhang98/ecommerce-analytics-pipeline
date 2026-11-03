@@ -92,6 +92,11 @@ def build() -> Path:
     hv_ok = hv[hv.index.str.contains("on time")].iloc[0]
     quad = q3["seller_quadrants"].set_index("quadrant")
     risk = quad[quad.index.str.startswith("1.")].iloc[0]
+    timing = analysis.repeat_timing_full_year(con)
+    clear = analysis.clear_flagged_sellers(con, **analysis.DEFAULTS["q3"])
+    hv_tbl = q3["handover_vs_outcome"]
+    late_after_ok_handover = (hv_tbl.loc[hv_tbl["handover"].str.contains("on time"), "late_deliveries"].sum()
+                              / hv_tbl["late_deliveries"].sum())
     known = tests[tests["category"] == "known-issue baseline"][
         ["dq_issue", "test", "failing_rows", "warn_if", "error_if", "status"]].sort_values(["dq_issue", "test"])
 
@@ -114,6 +119,8 @@ def build() -> Path:
         "top10": tiers.loc[10], "top5": tiers.loc[5], "top20": tiers.loc[20],
         "hv_late": hv_late, "hv_ok": hv_ok, "hv_ratio": hv_late / hv_ok,
         "risk_sellers": int(risk["sellers"]), "risk_share": risk["share_of_marketplace_gmv_pct"],
+        "median_full_year": timing["median_days"], "clear_sellers": clear["clearly_above_both"],
+        "late_after_ok_handover": 100 * late_after_ok_handover,
         "mismatch": int(at1["mismatched_orders"]), "mismatch_base": int(at1["orders_with_items_and_payments"]),
         "mismatch_installments": int(at1["overpaid_in_installments"]),
     }
