@@ -1,0 +1,37 @@
+exposures:
+  - name: streamlit_analytics_app
+    label: Olist analytics demo app (Streamlit)
+    type: application
+    maturity: medium
+    url: http://localhost:8501
+    description: >
+      Multi-page Streamlit app (`dashboard/app.py`) that walks through the pipeline: architecture,
+      raw data issues, lineage, test results, three business questions and an operations dashboard.
+      Reads a parquet export of the marts (`make cache`), never the warehouse directly.
+    depends_on:
+      - ref('fct_orders')
+      - ref('fct_order_items')
+      - ref('dim_customers')
+      - ref('dim_products')
+      - ref('dim_sellers')
+      - ref('dim_date')
+      - ref('customer_360')
+      - ref('seller_scorecard')
+    owner:
+      name: Analytics Engineering
+
+  - name: business_question_analyses
+    label: Business question SQL (analyses/)
+    type: analysis
+    maturity: high
+    description: >
+      Three standalone SQL analyses in the repo's `analyses/` folder, answered from the marts only:
+      delivery vs reviews by state, repeat purchase, and seller performance.
+    depends_on:
+      - ref('fct_orders')
+      - ref('fct_order_items')
+      - ref('dim_customers')
+      - ref('customer_360')
+      - ref('seller_scorecard')
+    owner:
+      name: Analytics Engineering

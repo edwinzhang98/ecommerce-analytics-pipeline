@@ -1,14 +1,144 @@
 sources:
   - name: olist
     description: >
-      Raw extract of the Olist marketplace (Kaggle `olistbr/brazilian-ecommerce`), landed as-is
-      by `ingestion/load_raw.py`. Every column is VARCHAR; typing and cleaning happen in staging.
+      Raw extract of the Olist marketplace (Kaggle `olistbr/brazilian-ecommerce`, orders from
+      2016-09 to 2018-10), landed as-is by `ingestion/load_raw.py`. Every column is VARCHAR;
+      typing and cleaning happen in staging. Each table carries `_source_file` and `_loaded_at`.
     schema: raw
+    config:
+      meta:
+        owner: analytics-engineering
+        loader: ingestion/load_raw.py
     tables:
       - name: orders
-        description: One row per order placed on the marketplace, in any status.
+        description: >
+          One row per order placed on the marketplace, in any status. 99,441 rows in the Kaggle release.
+        data_tests:
+          - row_count_matches_load_audit:
+              arguments:
+                audit_model: source('olist', 'load_audit')
+                audit_table_name: orders
         columns:
           - name: order_id
+            description: Order key.
             data_tests:
               - unique
               - not_null
+          - name: customer_id
+            description: Order-level customer key (one per order).
+            data_tests:
+              - unique
+              - not_null
+      - name: order_items
+        description: >
+          One row per unit sold (order line). No quantity column. 112,650 rows.
+        data_tests:
+          - row_count_matches_load_audit:
+              arguments:
+                audit_model: source('olist', 'load_audit')
+                audit_table_name: order_items
+          - dbt_utils.unique_combination_of_columns:
+              arguments:
+                combination_of_columns: [order_id, order_item_id]
+      - name: customers
+        description: >
+          One row per order-level customer record (customer_id). The person is customer_unique_id. 99,441 rows.
+        data_tests:
+          - row_count_matches_load_audit:
+              arguments:
+                audit_model: source('olist', 'load_audit')
+                audit_table_name: customers
+        columns:
+          - name: customer_id
+            description: Order-level customer key.
+            data_tests:
+              - unique
+              - not_null
+      - name: order_payments
+        description: >
+          One row per payment instalment record of an order. An order can be split across payment methods. 103,886 rows.
+        data_tests:
+          - row_count_matches_load_audit:
+              arguments:
+                audit_model: source('olist', 'load_audit')
+                audit_table_name: order_payments
+          - dbt_utils.unique_combination_of_columns:
+              arguments:
+                combination_of_columns: [order_id, payment_sequential]
+      - name: order_reviews
+        description: >
+          One row per (survey answer, order). review_id is NOT unique: one answer can cover several orders. 99,224 rows (the file has 104,719 physical lines because comments contain line breaks).
+        data_tests:
+          - row_count_matches_load_audit:
+              arguments:
+                audit_model: source('olist', 'load_audit')
+                audit_table_name: order_reviews
+          - dbt_utils.unique_combination_of_columns:
+              arguments:
+                combination_of_columns: [review_id, order_id]
+      - name: products
+        description: >
+          One row per product listing. 32,951 rows.
+        data_tests:
+          - row_count_matches_load_audit:
+              arguments:
+                audit_model: source('olist', 'load_audit')
+                audit_table_name: products
+        columns:
+          - name: product_id
+            description: Product key.
+            data_tests:
+              - unique
+              - not_null
+      - name: sellers
+        description: >
+          One row per seller. 3,095 rows.
+        data_tests:
+          - row_count_matches_load_audit:
+              arguments:
+                audit_model: source('olist', 'load_audit')
+                audit_table_name: sellers
+        columns:
+          - name: seller_id
+            description: Seller key.
+            data_tests:
+              - unique
+              - not_null
+      - name: geolocation
+        description: >
+          Many rows per zip code prefix (1,000,163 rows for ~19k prefixes), with exact duplicates and stray coordinates.
+        data_tests:
+          - row_count_matches_load_audit:
+              arguments:
+                audit_model: source('olist', 'load_audit')
+                audit_table_name: geolocation
+      - name: product_category_name_translation
+        description: >
+          Portuguese -> English category names. 71 rows (2 categories used by products are missing). The file starts with a UTF-8 BOM.
+        data_tests:
+          - row_count_matches_load_audit:
+              arguments:
+                audit_model: source('olist', 'load_audit')
+                audit_table_name: product_category_name_translation
+        columns:
+          - name: product_category_name
+            description: Portuguese category name.
+            data_tests:
+              - unique
+              - not_null
+      - name: load_audit
+        description: >
+          Written by `ingestion/load_raw.py`: one row per loaded table with file size, md5,
+          physical line count, parsed row count and the expected row count of the release.
+        columns:
+          - name: table_name
+            description: Raw table name.
+            data_tests:
+              - unique
+              - not_null
+          - name: status
+            description: "`ok` when the parsed row count equals the expected one."
+            data_tests:
+              - accepted_values:
+                  arguments:
+                    values: ["ok"]

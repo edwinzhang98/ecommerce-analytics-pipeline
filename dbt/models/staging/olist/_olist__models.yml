@@ -1,9 +1,533 @@
+# Staging: one model per source table. Rename, cast, normalise, de-duplicate. No joins.
+#
+# Test conventions (see docs/data_quality_report.md):
+#   * Plain tests (unique, not_null, relationships, ...) are hard rules: they error.
+#   * Tests tagged `known_issue` encode a documented raw-data issue as a BASELINE:
+#     they pass at today's known count, warn if the count grows, error if it explodes.
+#     `meta.dq_issue` points at the issue in the data quality report.
+
 models:
   - name: stg_olist__orders
-    description: One row per order. Typed, renamed copy of `raw.orders`.
+    description: >
+      One row per order, any status. Typed copy of `raw.orders`: timestamps cast from text,
+      the estimated delivery date cast to DATE (the source time part is always 00:00:00),
+      and the carrier/customer delivery columns renamed so their meaning is explicit.
     columns:
       - name: order_id
-        description: Primary key of an order.
+        description: "{{ doc('order_id') }}"
+        data_tests:
+          - unique
+          - not_null
+      - name: customer_id
+        description: "{{ doc('customer_id') }}"
+        data_tests:
+          - unique
+          - not_null
+          - relationships:
+              arguments:
+                to: ref('stg_olist__customers')
+                field: customer_id
+      - name: order_status
+        description: "{{ doc('order_status') }}"
+        data_tests:
+          - not_null
+          - accepted_values:
+              arguments:
+                values: [created, approved, invoiced, processing, shipped, delivered, canceled, unavailable]
+      - name: order_purchased_at
+        description: "{{ doc('order_purchased_at') }}"
+        data_tests:
+          - not_null
+      - name: order_approved_at
+        description: When the payment was approved. {{ doc('local_timestamp') }}
+        data_tests:
+          - not_null:
+              name: known_issue__delivered_orders_missing_approval
+              config:
+                where: "order_status = 'delivered'"
+                warn_if: ">14"
+                error_if: ">100"
+                tags: [known_issue]
+                meta:
+                  dq_issue: DQ-12
+          - not_before:
+              name: approved_not_before_purchase
+              arguments:
+                compare_column: order_purchased_at
+      - name: order_delivered_to_carrier_at
+        description: >
+          When the seller handed the order to the logistics partner (source column
+          `order_delivered_carrier_date`). {{ doc('local_timestamp') }}
+        data_tests:
+          - not_before:
+              name: known_issue__carrier_pickup_before_approval
+              arguments:
+                compare_column: order_approved_at
+              config:
+                warn_if: ">1359"
+                error_if: ">2000"
+                tags: [known_issue]
+                meta:
+                  dq_issue: DQ-12
+          - not_before:
+              name: known_issue__carrier_pickup_before_purchase
+              arguments:
+                compare_column: order_purchased_at
+              config:
+                warn_if: ">166"
+                error_if: ">500"
+                tags: [known_issue]
+                meta:
+                  dq_issue: DQ-12
+      - name: order_delivered_to_customer_at
+        description: >
+          When the order reached the customer (source column `order_delivered_customer_date`).
+          {{ doc('local_timestamp') }}
+        data_tests:
+          - not_before:
+              name: delivered_not_before_purchase
+              arguments:
+                compare_column: order_purchased_at
+          - not_before:
+              name: known_issue__delivered_before_carrier_pickup
+              arguments:
+                compare_column: order_delivered_to_carrier_at
+              config:
+                warn_if: ">23"
+                error_if: ">100"
+                tags: [known_issue]
+                meta:
+                  dq_issue: DQ-12
+          - not_null:
+              name: known_issue__delivered_orders_missing_delivery_timestamp
+              config:
+                where: "order_status = 'delivered'"
+                warn_if: ">8"
+                error_if: ">100"
+                tags: [known_issue]
+                meta:
+                  dq_issue: DQ-12
+      - name: order_estimated_delivery_date
+        description: Delivery date promised to the customer at purchase (date only).
+        data_tests:
+          - not_null
+          - not_before:
+              name: estimate_not_before_purchase_date
+              arguments:
+                compare_column: cast(order_purchased_at as date)
+      - name: _loaded_at
+        description: "{{ doc('loaded_at') }}"
+
+  - name: stg_olist__order_items
+    description: >
+      One row per unit sold (order line). There is no quantity column: buying three units of a
+      product creates three rows. Prices and freight are cast to DECIMAL(10,2) BRL.
+    data_tests:
+      - dbt_utils.unique_combination_of_columns:
+          arguments:
+            combination_of_columns: [order_id, order_item_id]
+    columns:
+      - name: order_item_key
+        description: "{{ doc('order_item_key') }}"
+        data_tests:
+          - unique
+          - not_null
+      - name: order_id
+        description: "{{ doc('order_id') }}"
+        data_tests:
+          - not_null
+          - relationships:
+              arguments:
+                to: ref('stg_olist__orders')
+                field: order_id
+      - name: order_item_id
+        description: "{{ doc('order_item_id') }}"
+        data_tests:
+          - not_null
+      - name: product_id
+        description: "{{ doc('product_id') }}"
+        data_tests:
+          - not_null
+          - relationships:
+              arguments:
+                to: ref('stg_olist__products')
+                field: product_id
+      - name: seller_id
+        description: "{{ doc('seller_id') }}"
+        data_tests:
+          - not_null
+          - relationships:
+              arguments:
+                to: ref('stg_olist__sellers')
+                field: seller_id
+      - name: shipping_limit_at
+        description: >
+          Deadline for the seller to hand the item to the carrier. {{ doc('local_timestamp') }}
+        data_tests:
+          - not_null
+          - dbt_utils.accepted_range:
+              name: known_issue__shipping_limit_years_after_purchase
+              arguments:
+                max_value: "cast('2019-01-01' as timestamp)"
+              config:
+                warn_if: ">4"
+                error_if: ">50"
+                tags: [known_issue]
+                meta:
+                  dq_issue: DQ-13
+      - name: item_price_brl
+        description: Price of one unit in BRL, excluding freight.
+        data_tests:
+          - not_null
+          - dbt_utils.accepted_range:
+              arguments:
+                min_value: 0
+                inclusive: false
+      - name: freight_value_brl
+        description: Freight charged for this item in BRL (0 for free shipping).
+        data_tests:
+          - not_null
+          - non_negative
+
+  - name: stg_olist__customers
+    description: >
+      One row per order-level customer record. `customer_id` is issued per order; the person is
+      `customer_unique_id` (ADR 0003). Zip prefixes are kept as 5-character text.
+    data_tests:
+      - dbt_utils.expression_is_true:
+          name: customer_zip_prefix_is_five_digits
+          arguments:
+            expression: "regexp_full_match(customer_zip_code_prefix, '[0-9]{5}')"
+    columns:
+      - name: customer_id
+        description: "{{ doc('customer_id') }}"
+        data_tests:
+          - unique
+          - not_null
+      - name: customer_unique_id
+        description: "{{ doc('customer_unique_id') }}"
+        data_tests:
+          - not_null
+      - name: customer_zip_code_prefix
+        description: "{{ doc('zip_code_prefix') }}"
+        data_tests:
+          - not_null
+          - relationships:
+              name: known_issue__customer_zip_prefix_missing_from_geolocation
+              arguments:
+                to: ref('int_geolocation_aggregated_to_zip_prefixes')
+                field: zip_code_prefix
+              config:
+                warn_if: ">279"
+                error_if: ">1000"
+                tags: [known_issue]
+                meta:
+                  dq_issue: DQ-16
+      - name: customer_city
+        description: City, lower-case without accents.
+        data_tests:
+          - not_null
+      - name: customer_state
+        description: "{{ doc('state_code') }}"
+        data_tests:
+          - not_null
+          - relationships:
+              arguments:
+                to: ref('brazil_states')
+                field: state_code
+
+  - name: stg_olist__order_payments
+    description: >
+      One row per payment record of an order (`payment_sequential` = 1..n). An order can be
+      paid with several methods, e.g. a voucher plus a credit card.
+    data_tests:
+      - dbt_utils.unique_combination_of_columns:
+          arguments:
+            combination_of_columns: [order_id, payment_sequential]
+      - dbt_utils.expression_is_true:
+          name: known_issue__payment_type_not_defined
+          arguments:
+            expression: "payment_type <> 'not_defined'"
+          config:
+            warn_if: ">3"
+            error_if: ">50"
+            tags: [known_issue]
+            meta:
+              dq_issue: DQ-11
+    columns:
+      - name: payment_key
+        description: Surrogate key, hash of `order_id` and `payment_sequential`.
+        data_tests:
+          - unique
+          - not_null
+      - name: order_id
+        description: "{{ doc('order_id') }}"
+        data_tests:
+          - not_null
+          - relationships:
+              arguments:
+                to: ref('stg_olist__orders')
+                field: order_id
+      - name: payment_sequential
+        description: Sequence number of the payment record within the order.
+        data_tests:
+          - not_null
+      - name: payment_type
+        description: "`credit_card`, `boleto` (bank slip), `voucher`, `debit_card`, or `not_defined` (3 zero-value rows)."
+        data_tests:
+          - not_null
+          - accepted_values:
+              arguments:
+                values: [credit_card, boleto, voucher, debit_card, not_defined]
+      - name: payment_installments
+        description: Number of installments chosen (credit cards up to 24; other methods 1).
+        data_tests:
+          - not_null
+          - dbt_utils.accepted_range:
+              name: known_issue__payment_with_zero_installments
+              arguments:
+                min_value: 1
+              config:
+                warn_if: ">2"
+                error_if: ">50"
+                tags: [known_issue]
+                meta:
+                  dq_issue: DQ-11
+      - name: payment_value_brl
+        description: Amount paid with this record in BRL; card amounts can include installment interest.
+        data_tests:
+          - not_null
+          - non_negative
+
+  - name: stg_olist__order_reviews
+    description: >
+      One row per (survey answer, order). Comments are whitespace-normalised and empty strings
+      become null. **Neither `review_id` nor `order_id` is unique here**: one answer can cover
+      several orders, and some orders were reviewed 2-3 times. De-duplicated to one review per
+      order in `int_reviews_deduplicated_to_orders`.
+    data_tests:
+      - dbt_utils.unique_combination_of_columns:
+          arguments:
+            combination_of_columns: [review_id, order_id]
+    columns:
+      - name: order_review_key
+        description: Surrogate key, hash of `review_id` and `order_id`.
+        data_tests:
+          - unique
+          - not_null
+      - name: review_id
+        description: Survey answer id. Not unique on its own (see model description).
+        data_tests:
+          - not_null
+          - unique:
+              name: known_issue__review_id_shared_across_orders
+              config:
+                warn_if: ">789"
+                error_if: ">2000"
+                tags: [known_issue]
+                meta:
+                  dq_issue: DQ-02
+      - name: order_id
+        description: "{{ doc('order_id') }}"
+        data_tests:
+          - not_null
+          - relationships:
+              arguments:
+                to: ref('stg_olist__orders')
+                field: order_id
+          - unique:
+              name: known_issue__orders_with_multiple_reviews
+              config:
+                warn_if: ">547"
+                error_if: ">2000"
+                tags: [known_issue]
+                meta:
+                  dq_issue: DQ-03
+      - name: review_score
+        description: "{{ doc('review_score') }}"
+        data_tests:
+          - not_null
+          - accepted_values:
+              arguments:
+                values: [1, 2, 3, 4, 5]
+                quote: false
+      - name: review_comment_title
+        description: Optional comment title, whitespace-normalised.
+      - name: review_comment_message
+        description: Optional comment text, whitespace-normalised (line breaks become spaces).
+      - name: review_survey_sent_date
+        description: >
+          Date the satisfaction survey was sent (source column `review_creation_date`, whose time
+          part is always 00:00:00).
+        data_tests:
+          - not_null
+      - name: review_answered_at
+        description: When the customer answered the survey. {{ doc('local_timestamp') }}
+        data_tests:
+          - not_null
+          - not_before:
+              name: review_answered_not_before_survey_sent
+              arguments:
+                compare_column: review_survey_sent_date
+
+  - name: stg_olist__products
+    description: >
+      One row per product. The misspelled source columns (`*_lenght`) are renamed. The category
+      is kept in Portuguese; `dim_products` adds the English name.
+    columns:
+      - name: product_id
+        description: "{{ doc('product_id') }}"
+        data_tests:
+          - unique
+          - not_null
+      - name: product_category_name
+        description: Category in Portuguese (null for 610 products).
+        data_tests:
+          - not_null:
+              name: known_issue__products_missing_category
+              config:
+                warn_if: ">610"
+                error_if: ">1500"
+                tags: [known_issue]
+                meta:
+                  dq_issue: DQ-07
+      - name: product_name_length
+        description: Number of characters in the product name.
+      - name: product_description_length
+        description: Number of characters in the product description.
+      - name: product_photos_count
+        description: Number of photos on the listing.
+      - name: product_weight_g
+        description: Weight in grams.
+        data_tests:
+          - not_null:
+              name: known_issue__products_missing_weight
+              config:
+                warn_if: ">2"
+                error_if: ">50"
+                tags: [known_issue]
+                meta:
+                  dq_issue: DQ-07
+          - dbt_utils.accepted_range:
+              name: known_issue__products_with_zero_weight
+              arguments:
+                min_value: 1
+              config:
+                warn_if: ">4"
+                error_if: ">50"
+                tags: [known_issue]
+                meta:
+                  dq_issue: DQ-07
+      - name: product_length_cm
+        description: Package length in cm.
+      - name: product_height_cm
+        description: Package height in cm.
+      - name: product_width_cm
+        description: Package width in cm.
+
+  - name: stg_olist__sellers
+    description: >
+      One row per seller. `seller_city` is free text typed by sellers and is cleaned by the
+      `clean_city_name` macro (state suffixes removed; values that are not a city, such as a zip
+      code or an e-mail address, become null).
+    columns:
+      - name: seller_id
+        description: "{{ doc('seller_id') }}"
+        data_tests:
+          - unique
+          - not_null
+      - name: seller_zip_code_prefix
+        description: "{{ doc('zip_code_prefix') }}"
+        data_tests:
+          - not_null
+          - relationships:
+              name: known_issue__seller_zip_prefix_missing_from_geolocation
+              arguments:
+                to: ref('int_geolocation_aggregated_to_zip_prefixes')
+                field: zip_code_prefix
+              config:
+                warn_if: ">7"
+                error_if: ">50"
+                tags: [known_issue]
+                meta:
+                  dq_issue: DQ-16
+      - name: seller_city
+        description: Cleaned city name (lower-case, no accents); null when the source value is not a city.
+        data_tests:
+          - not_null:
+              name: known_issue__seller_city_unusable
+              config:
+                warn_if: ">7"
+                error_if: ">50"
+                tags: [known_issue]
+                meta:
+                  dq_issue: DQ-06
+      - name: seller_state
+        description: "{{ doc('state_code') }}"
+        data_tests:
+          - not_null
+          - relationships:
+              arguments:
+                to: ref('brazil_states')
+                field: state_code
+
+  - name: stg_olist__geolocation
+    description: >
+      Distinct (zip prefix, latitude, longitude, city, state) rows. The raw file repeats points
+      many times; city names are normalised before de-duplication. `is_within_brazil` flags the
+      points that fall outside a bounding box around Brazil.
+    data_tests:
+      - dbt_utils.expression_is_true:
+          name: known_issue__geolocation_points_outside_brazil
+          arguments:
+            expression: "is_within_brazil"
+          config:
+            warn_if: ">27"
+            error_if: ">200"
+            tags: [known_issue]
+            meta:
+              dq_issue: DQ-05
+    columns:
+      - name: geolocation_key
+        description: Surrogate key of a distinct point.
+        data_tests:
+          - unique
+          - not_null
+      - name: zip_code_prefix
+        description: "{{ doc('zip_code_prefix') }}"
+        data_tests:
+          - not_null
+      - name: latitude
+        description: Latitude in decimal degrees.
+        data_tests:
+          - not_null
+      - name: longitude
+        description: Longitude in decimal degrees.
+        data_tests:
+          - not_null
+      - name: city
+        description: Cleaned city name.
+      - name: state_code
+        description: "{{ doc('state_code') }}"
+        data_tests:
+          - not_null
+          - relationships:
+              arguments:
+                to: ref('brazil_states')
+                field: state_code
+      - name: is_within_brazil
+        description: True when the point lies inside the Brazil bounding box (macro `is_within_brazil`).
+
+  - name: stg_olist__product_category_translation
+    description: Portuguese to English product category names (source table; 2 categories missing, see seed overrides).
+    columns:
+      - name: product_category_name
+        description: Category in Portuguese.
+        data_tests:
+          - unique
+          - not_null
+      - name: product_category_name_english
+        description: Category in English (snake_case).
         data_tests:
           - unique
           - not_null

@@ -1,0 +1,9 @@
+order_status,order_status_group,is_valid_order,is_terminal_status,status_sort_order,status_description
+created,awaiting_payment,true,false,1,Order placed; payment not yet approved
+approved,processing,true,false,2,Payment approved; invoice not yet issued
+invoiced,processing,true,false,3,Invoice issued; seller preparing the order
+processing,processing,true,false,4,Seller is preparing the order for shipment
+shipped,shipped,true,false,5,Handed to the carrier; not yet delivered
+delivered,delivered,true,true,6,Delivered to the customer
+canceled,canceled,false,true,7,Order canceled (by customer or marketplace)
+unavailable,unavailable,false,true,8,Product unavailable; the order could not be fulfilled

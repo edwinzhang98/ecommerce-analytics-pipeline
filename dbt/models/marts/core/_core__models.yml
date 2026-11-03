@@ -1,9 +1,690 @@
+# Core marts: the star schema. Contracts are enforced, so column names and types are a
+# stable interface for analysts and the dashboard. Grain and reconciliation tests guard
+# against fan-out and double counting (ADR 0003).
+
 models:
   - name: fct_orders
-    description: One row per order (skeleton).
+    description: >
+      **One row per order placed on the marketplace, in any status** (99,441 rows).
+      The single source of truth for order counts and order-level revenue, delivery and review
+      outcomes. Placed orders = `count(*)`; **net orders (official KPI) =
+      `count(*) filter (where is_valid_order)`**; delivered orders =
+      `count(*) filter (where is_delivered)` (ADR 0002). Date basis: `order_purchase_date`.
+      Rebuilt in full on every run (it holds mutable order state).
+    config:
+      contract:
+        enforced: true
+      meta:
+        grain: one row per order
+        owner: analytics-engineering
+    data_tests:
+      - row_count_matches:
+          name: fct_orders_has_one_row_per_source_order
+          arguments:
+            compare_model: ref('stg_olist__orders')
+      - sum_matches:
+          name: fct_orders_payments_reconcile_with_staging
+          arguments:
+            column_name: payment_total_brl
+            compare_model: ref('stg_olist__order_payments')
+            compare_column: payment_value_brl
     columns:
       - name: order_id
-        description: Primary key of an order.
+        description: "{{ doc('order_id') }}"
+        data_type: varchar
+        constraints:
+          - type: not_null
         data_tests:
           - unique
           - not_null
+      - name: customer_unique_id
+        description: "{{ doc('customer_unique_id') }} Foreign key to `dim_customers`."
+        data_type: varchar
+        data_tests:
+          - not_null
+          - relationships:
+              arguments:
+                to: ref('dim_customers')
+                field: customer_unique_id
+      - name: customer_id
+        description: "{{ doc('customer_id') }} Kept for traceability to the source only."
+        data_type: varchar
+        data_tests:
+          - unique
+          - not_null
+      - name: order_purchase_date
+        description: "{{ doc('order_purchase_date') }}"
+        data_type: date
+        data_tests:
+          - not_null
+          - relationships:
+              arguments:
+                to: ref('dim_date')
+                field: date_day
+      - name: order_status
+        description: "{{ doc('order_status') }}"
+        data_type: varchar
+        data_tests:
+          - not_null
+          - accepted_values:
+              arguments:
+                values: [created, approved, invoiced, processing, shipped, delivered, canceled, unavailable]
+      - name: order_status_group
+        description: "{{ doc('order_status_group') }}"
+        data_type: varchar
+        data_tests:
+          - not_null
+          - accepted_values:
+              arguments:
+                values: [awaiting_payment, processing, shipped, delivered, canceled, unavailable]
+      - name: is_valid_order
+        description: "{{ doc('is_valid_order') }}"
+        data_type: boolean
+        data_tests:
+          - not_null
+      - name: is_delivered
+        description: "{{ doc('is_delivered') }}"
+        data_type: boolean
+        data_tests:
+          - not_null
+      - name: order_purchased_at
+        description: "{{ doc('order_purchased_at') }}"
+        data_type: timestamp
+        data_tests:
+          - not_null
+      - name: order_purchased_at_utc
+        description: "`order_purchased_at` converted to UTC (for joining with systems that log in UTC)."
+        data_type: timestamp
+        data_tests:
+          - not_null
+      - name: order_approved_at
+        description: When the payment was approved. {{ doc('local_timestamp') }}
+        data_type: timestamp
+      - name: order_delivered_to_carrier_at
+        description: When the seller handed the order to the carrier. {{ doc('local_timestamp') }}
+        data_type: timestamp
+      - name: order_delivered_to_customer_at
+        description: When the order reached the customer. {{ doc('local_timestamp') }}
+        data_type: timestamp
+        data_tests:
+          - not_before:
+              arguments:
+                compare_column: order_purchased_at
+      - name: order_estimated_delivery_date
+        description: Delivery date promised to the customer at purchase.
+        data_type: date
+        data_tests:
+          - not_null
+      - name: order_delivered_date
+        description: Local calendar date of delivery. Delivered orders with a delivery timestamp only.
+        data_type: date
+      - name: hours_to_approval
+        description: Hours from purchase to payment approval.
+        data_type: double
+        data_tests:
+          - non_negative
+      - name: delivery_days
+        description: "{{ doc('delivery_days') }}"
+        data_type: integer
+        data_tests:
+          - non_negative
+      - name: estimated_delivery_days
+        description: Calendar days from purchase date to the estimated delivery date.
+        data_type: integer
+        data_tests:
+          - non_negative
+      - name: delivery_delay_days
+        description: Delivery date minus estimated date, in days. Positive = late, negative = early. Delivered orders only.
+        data_type: integer
+      - name: is_late_delivery
+        description: "{{ doc('is_late_delivery') }}"
+        data_type: boolean
+      - name: item_count
+        description: Number of item rows (units) in the order. 0 for orders without items.
+        data_type: integer
+        data_tests:
+          - not_null
+          - non_negative
+      - name: distinct_product_count
+        description: Number of distinct products in the order.
+        data_type: integer
+      - name: distinct_seller_count
+        description: Number of distinct sellers in the order (>1 for 1.3% of orders).
+        data_type: integer
+      - name: items_subtotal_brl
+        description: Sum of item prices in BRL, excluding freight.
+        data_type: decimal(18,2)
+        data_tests:
+          - not_null
+          - non_negative
+      - name: freight_total_brl
+        description: Sum of freight in BRL.
+        data_type: decimal(18,2)
+        data_tests:
+          - not_null
+          - non_negative
+      - name: order_gmv_brl
+        description: "{{ doc('order_gmv_brl') }}"
+        data_type: decimal(18,2)
+        data_tests:
+          - not_null
+          - non_negative
+      - name: payment_total_brl
+        description: "{{ doc('payment_total_brl') }}"
+        data_type: decimal(18,2)
+        data_tests:
+          - not_null
+          - non_negative
+      - name: payment_count
+        description: Number of payment records of the order.
+        data_type: integer
+      - name: primary_payment_type
+        description: Payment method with the largest amount in the order. Null when there is no payment.
+        data_type: varchar
+        data_tests:
+          - accepted_values:
+              arguments:
+                values: [credit_card, boleto, voucher, debit_card, not_defined]
+      - name: max_payment_installments
+        description: Largest number of installments among the order's payments.
+        data_type: integer
+      - name: credit_card_amount_brl
+        description: Amount paid by credit card (BRL).
+        data_type: decimal(18,2)
+      - name: boleto_amount_brl
+        description: Amount paid by boleto bank slip (BRL).
+        data_type: decimal(18,2)
+      - name: voucher_amount_brl
+        description: Amount paid with vouchers (BRL).
+        data_type: decimal(18,2)
+      - name: debit_card_amount_brl
+        description: Amount paid by debit card (BRL).
+        data_type: decimal(18,2)
+      - name: has_voucher_payment
+        description: True when at least one payment record is a voucher.
+        data_type: boolean
+      - name: payment_gmv_difference_brl
+        description: >
+          `payment_total_brl - order_gmv_brl`. Usually 0; positive values are mostly installment
+          interest on credit cards (ADR 0004).
+        data_type: decimal(18,2)
+      - name: has_review
+        description: True when the customer answered the satisfaction survey for this order.
+        data_type: boolean
+        data_tests:
+          - not_null
+      - name: review_id
+        description: Survey answer kept for the order (the latest one).
+        data_type: varchar
+      - name: review_score
+        description: "{{ doc('review_score') }}"
+        data_type: integer
+        data_tests:
+          - accepted_values:
+              arguments:
+                values: [1, 2, 3, 4, 5]
+                quote: false
+      - name: is_bad_review
+        description: "{{ doc('is_bad_review') }}"
+        data_type: boolean
+      - name: review_count
+        description: Number of survey answers recorded for the order (0-3).
+        data_type: integer
+      - name: review_answered_at
+        description: When the kept survey answer was given. {{ doc('local_timestamp') }}
+        data_type: timestamp
+      - name: has_items
+        description: False for 775 orders without any item (mostly unavailable / canceled).
+        data_type: boolean
+        data_tests:
+          - not_null
+      - name: has_payment
+        description: False for orders without a payment record (1 delivered order in the source).
+        data_type: boolean
+        data_tests:
+          - not_null
+          - accepted_values:
+              name: known_issue__valid_orders_without_payment
+              arguments:
+                values: [true]
+                quote: false
+              config:
+                where: "is_valid_order"
+                warn_if: ">1"
+                error_if: ">10"
+                tags: [known_issue]
+                meta:
+                  dq_issue: DQ-09
+      - name: is_payment_mismatch
+        description: >
+          True when the order has items and payments and they differ by more than
+          `payment_mismatch_tolerance_brl` (default R$1.00).
+        data_type: boolean
+      - name: data_quality_flags
+        description: >
+          Comma-separated data-quality codes, null when clean. Lifecycle codes (carrier_before_approval,
+          delivered_before_carrier, ...) plus no_items, no_payment, payment_mismatch. Use it to exclude
+          or inspect suspicious orders; it never removes rows.
+        data_type: varchar
+
+  - name: fct_order_items
+    description: >
+      **One row per unit sold (order line)** (112,650 rows). Item price, freight, product and
+      seller as fixed at purchase. **Incremental** (ADR 0005): rows never change after purchase,
+      so each run only processes orders purchased since the last load (with a
+      `fct_order_items_lookback_days` safety window). For status, delivery or review, join to
+      `fct_orders` on `order_id` (many-to-one, safe).
+    config:
+      contract:
+        enforced: true
+      meta:
+        grain: one row per order item (unit)
+        owner: analytics-engineering
+    data_tests:
+      - row_count_matches:
+          name: fct_order_items_has_one_row_per_source_item
+          arguments:
+            compare_model: ref('stg_olist__order_items')
+      - dbt_utils.unique_combination_of_columns:
+          arguments:
+            combination_of_columns: [order_id, order_item_id]
+      - sum_matches:
+          name: item_gmv_reconciles_with_order_gmv
+          arguments:
+            column_name: item_total_brl
+            compare_model: ref('fct_orders')
+            compare_column: order_gmv_brl
+            tolerance: 0
+    columns:
+      - name: order_item_key
+        description: "{{ doc('order_item_key') }}"
+        data_type: varchar
+        constraints:
+          - type: not_null
+        data_tests:
+          - unique
+          - not_null
+      - name: order_id
+        description: "{{ doc('order_id') }} Foreign key to `fct_orders`."
+        data_type: varchar
+        data_tests:
+          - not_null
+          - relationships:
+              arguments:
+                to: ref('fct_orders')
+                field: order_id
+      - name: order_item_id
+        description: "{{ doc('order_item_id') }}"
+        data_type: integer
+        data_tests:
+          - not_null
+      - name: product_id
+        description: "{{ doc('product_id') }} Foreign key to `dim_products`."
+        data_type: varchar
+        data_tests:
+          - not_null
+          - relationships:
+              arguments:
+                to: ref('dim_products')
+                field: product_id
+      - name: seller_id
+        description: "{{ doc('seller_id') }} Foreign key to `dim_sellers`."
+        data_type: varchar
+        data_tests:
+          - not_null
+          - relationships:
+              arguments:
+                to: ref('dim_sellers')
+                field: seller_id
+      - name: customer_unique_id
+        description: "{{ doc('customer_unique_id') }} Foreign key to `dim_customers`."
+        data_type: varchar
+        data_tests:
+          - not_null
+          - relationships:
+              arguments:
+                to: ref('dim_customers')
+                field: customer_unique_id
+      - name: order_purchase_date
+        description: "{{ doc('order_purchase_date') }}"
+        data_type: date
+        data_tests:
+          - not_null
+          - relationships:
+              arguments:
+                to: ref('dim_date')
+                field: date_day
+      - name: order_purchased_at
+        description: "{{ doc('order_purchased_at') }} Also the incremental watermark."
+        data_type: timestamp
+        data_tests:
+          - not_null
+      - name: shipping_limit_at
+        description: Deadline for the seller to hand the item to the carrier. {{ doc('local_timestamp') }}
+        data_type: timestamp
+      - name: item_price_brl
+        description: Price of the unit in BRL, excluding freight.
+        data_type: decimal(18,2)
+        data_tests:
+          - not_null
+          - non_negative
+      - name: freight_value_brl
+        description: Freight charged for the unit in BRL.
+        data_type: decimal(18,2)
+        data_tests:
+          - not_null
+          - non_negative
+      - name: item_total_brl
+        description: "`item_price_brl + freight_value_brl`: the item's contribution to order GMV."
+        data_type: decimal(18,2)
+        data_tests:
+          - not_null
+          - non_negative
+
+  - name: dim_customers
+    description: >
+      **One row per person (`customer_unique_id`)** (96,096 rows), including the 1,100+ people
+      whose only orders were canceled or unavailable. Location comes from the person's most
+      recent order. Carries the RFM inputs: **R = `recency_days`, F = `frequency_orders`,
+      M = `monetary_gmv_brl`** (valid orders only), measured against `rfm_reference_date`, the
+      last valid purchase date in the data.
+    config:
+      contract:
+        enforced: true
+      meta:
+        grain: one row per person (customer_unique_id)
+        owner: analytics-engineering
+    data_tests:
+      - row_count_matches:
+          name: dim_customers_has_one_row_per_person
+          arguments:
+            compare_model: ref('stg_olist__customers')
+            compare_column: customer_unique_id
+      - sum_matches:
+          name: customer_gmv_reconciles_with_net_order_gmv
+          arguments:
+            column_name: monetary_gmv_brl
+            compare_model: ref('fct_orders')
+            compare_column: order_gmv_brl
+            compare_filter: is_valid_order
+            tolerance: 0
+    columns:
+      - name: customer_unique_id
+        description: "{{ doc('customer_unique_id') }}"
+        data_type: varchar
+        constraints:
+          - type: not_null
+        data_tests:
+          - unique
+          - not_null
+      - name: customer_zip_code_prefix
+        description: "{{ doc('zip_code_prefix') }} From the most recent order."
+        data_type: varchar
+      - name: customer_city
+        description: City of the most recent order (lower-case, no accents).
+        data_type: varchar
+      - name: customer_state
+        description: "{{ doc('state_code') }}"
+        data_type: varchar
+        data_tests:
+          - not_null
+          - relationships:
+              arguments:
+                to: ref('brazil_states')
+                field: state_code
+      - name: customer_state_name
+        description: State name.
+        data_type: varchar
+      - name: customer_region
+        description: Macro-region (North, Northeast, Center-West, Southeast, South).
+        data_type: varchar
+        data_tests:
+          - not_null
+      - name: customer_latitude
+        description: Median latitude of the customer's zip prefix (null when the prefix is not in the geolocation file).
+        data_type: double
+      - name: customer_longitude
+        description: Median longitude of the customer's zip prefix.
+        data_type: double
+      - name: orders_placed
+        description: Orders placed by the person in any status.
+        data_type: integer
+        data_tests:
+          - not_null
+          - dbt_utils.accepted_range:
+              arguments:
+                min_value: 1
+      - name: first_order_at
+        description: First order in any status. {{ doc('local_timestamp') }}
+        data_type: timestamp
+      - name: first_valid_order_at
+        description: First valid order. Null when the person has none.
+        data_type: timestamp
+      - name: last_valid_order_at
+        description: Most recent valid order.
+        data_type: timestamp
+      - name: purchase_days
+        description: >
+          Distinct calendar days with a valid order. Used for repeat status because one checkout
+          can be split into several orders in the same second.
+        data_type: integer
+      - name: has_valid_order
+        description: True when the person has at least one valid (non-canceled, available) order.
+        data_type: boolean
+        data_tests:
+          - not_null
+      - name: is_repeat_customer
+        description: True when the person bought on at least 2 different days (valid orders).
+        data_type: boolean
+        data_tests:
+          - not_null
+      - name: rfm_reference_date
+        description: The "today" used for recency, i.e. the last valid purchase date in the data (the extract is historical).
+        data_type: date
+      - name: recency_days
+        description: "RFM recency: days from the last valid order to `rfm_reference_date`. Null without valid orders."
+        data_type: integer
+        data_tests:
+          - non_negative
+      - name: frequency_orders
+        description: "RFM frequency: number of valid orders."
+        data_type: integer
+        data_tests:
+          - not_null
+          - non_negative
+      - name: monetary_gmv_brl
+        description: "RFM monetary: GMV (items + freight) of the person's valid orders, in BRL."
+        data_type: decimal(18,2)
+        data_tests:
+          - not_null
+          - non_negative
+      - name: avg_order_value_brl
+        description: "`monetary_gmv_brl / frequency_orders`. Null without valid orders."
+        data_type: decimal(18,2)
+
+  - name: dim_products
+    description: >
+      **One row per product** (32,951 rows). Adds the English category (source translation plus a
+      seed for the 2 missing categories); products without a category get `unknown`.
+    config:
+      contract:
+        enforced: true
+      meta:
+        grain: one row per product
+        owner: analytics-engineering
+    data_tests:
+      - row_count_matches:
+          arguments:
+            compare_model: ref('stg_olist__products')
+    columns:
+      - name: product_id
+        description: "{{ doc('product_id') }}"
+        data_type: varchar
+        constraints:
+          - type: not_null
+        data_tests:
+          - unique
+          - not_null
+      - name: product_category_name
+        description: Category in Portuguese, as in the source (null for 610 products).
+        data_type: varchar
+      - name: product_category
+        description: Category in English; `unknown` when the source has no category. Use this for reporting.
+        data_type: varchar
+        data_tests:
+          - not_null
+      - name: product_name_length
+        description: Characters in the product name.
+        data_type: integer
+      - name: product_description_length
+        description: Characters in the product description.
+        data_type: integer
+      - name: product_photos_count
+        description: Photos on the listing.
+        data_type: integer
+      - name: product_weight_g
+        description: Weight in grams (0 for 4 products, null for 2).
+        data_type: integer
+      - name: product_length_cm
+        description: Package length in cm.
+        data_type: integer
+      - name: product_height_cm
+        description: Package height in cm.
+        data_type: integer
+      - name: product_width_cm
+        description: Package width in cm.
+        data_type: integer
+      - name: product_volume_cm3
+        description: Length x height x width in cubic cm.
+        data_type: integer
+      - name: has_complete_attributes
+        description: True when category, a positive weight and all dimensions are present.
+        data_type: boolean
+        data_tests:
+          - not_null
+
+  - name: dim_sellers
+    description: >
+      **One row per seller** (3,095 rows) with cleaned city, state, region and zip-prefix
+      coordinates. Performance metrics are in `seller_scorecard`.
+    config:
+      contract:
+        enforced: true
+      meta:
+        grain: one row per seller
+        owner: analytics-engineering
+    data_tests:
+      - row_count_matches:
+          arguments:
+            compare_model: ref('stg_olist__sellers')
+    columns:
+      - name: seller_id
+        description: "{{ doc('seller_id') }}"
+        data_type: varchar
+        constraints:
+          - type: not_null
+        data_tests:
+          - unique
+          - not_null
+      - name: seller_zip_code_prefix
+        description: "{{ doc('zip_code_prefix') }}"
+        data_type: varchar
+      - name: seller_city
+        description: >
+          Cleaned city. For the 7 sellers whose source value is not a city (a zip code, an e-mail
+          address, a bare state code), the most common city of their zip prefix is used instead.
+        data_type: varchar
+        data_tests:
+          - not_null
+      - name: is_city_inferred_from_zip
+        description: True when `seller_city` was inferred from the zip prefix instead of the seller's own entry.
+        data_type: boolean
+      - name: seller_state
+        description: "{{ doc('state_code') }}"
+        data_type: varchar
+        data_tests:
+          - not_null
+      - name: seller_state_name
+        description: State name.
+        data_type: varchar
+      - name: seller_region
+        description: Macro-region.
+        data_type: varchar
+        data_tests:
+          - not_null
+      - name: seller_latitude
+        description: Median latitude of the seller's zip prefix.
+        data_type: double
+      - name: seller_longitude
+        description: Median longitude of the seller's zip prefix.
+        data_type: double
+
+  - name: dim_date
+    description: >
+      **One row per calendar day from 2016-01-01 to 2018-12-31.** Brazilian national holidays,
+      Black Friday, and `is_complete_data_month` (true for 2017-01 to 2018-08; use it to keep
+      partial months out of trend charts).
+    config:
+      contract:
+        enforced: true
+      meta:
+        grain: one row per calendar day
+        owner: analytics-engineering
+    data_tests:
+      - is_continuous_date_spine:
+          arguments:
+            column_name: date_day
+    columns:
+      - name: date_day
+        description: The calendar date (primary key).
+        data_type: date
+        constraints:
+          - type: not_null
+        data_tests:
+          - unique
+          - not_null
+      - name: year
+        description: Calendar year.
+        data_type: integer
+      - name: quarter
+        description: Calendar quarter (1-4).
+        data_type: integer
+      - name: month
+        description: Month number (1-12).
+        data_type: integer
+      - name: month_name
+        description: Month name in English.
+        data_type: varchar
+      - name: year_month
+        description: "`YYYY-MM`, convenient for monthly grouping."
+        data_type: varchar
+      - name: month_start_date
+        description: First day of the month.
+        data_type: date
+      - name: week_start_date
+        description: Monday of the ISO week.
+        data_type: date
+      - name: day_of_month
+        description: Day of the month (1-31).
+        data_type: integer
+      - name: day_of_week
+        description: ISO day of week (1 = Monday ... 7 = Sunday).
+        data_type: integer
+      - name: day_name
+        description: Day name in English.
+        data_type: varchar
+      - name: is_weekend
+        description: Saturday or Sunday.
+        data_type: boolean
+      - name: is_holiday
+        description: True on a Brazilian national (or widely observed optional) holiday.
+        data_type: boolean
+      - name: holiday_name
+        description: Holiday name, null on normal days.
+        data_type: varchar
+      - name: is_black_friday
+        description: Friday after the fourth Thursday of November (2016-11-25, 2017-11-24, 2018-11-23).
+        data_type: boolean
+      - name: is_complete_data_month
+        description: True for months with full order coverage (2017-01 to 2018-08).
+        data_type: boolean

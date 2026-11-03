@@ -21,6 +21,11 @@ vars:
   payment_mismatch_tolerance_brl: 1.00
   # Incremental fct_order_items re-processes this many days before the latest loaded purchase.
   fct_order_items_lookback_days: 3
+  # Months with complete order coverage (2016 and Sep-Oct 2018 are partial, see the DQ report).
+  complete_data_start_month: "2017-01"
+  complete_data_end_month: "2018-08"
+  # Coverage guard used by tests/singular/assert_complete_months_have_expected_volume.sql
+  min_net_orders_per_complete_month: 500
 
 models:
   olist_analytics:

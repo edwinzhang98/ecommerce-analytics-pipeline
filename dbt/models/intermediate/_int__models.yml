@@ -1,0 +1,224 @@
+# Intermediate: purpose-built building blocks. Not for analysts (marts only).
+# Every order-grain model is tested for exactly one row per order.
+
+models:
+  - name: int_order_items_aggregated_to_orders
+    description: Order items rolled up to one row per order (orders with at least one item only).
+    columns:
+      - name: order_id
+        description: "{{ doc('order_id') }}"
+        data_tests:
+          - unique
+          - not_null
+      - name: item_count
+        description: Number of item rows (units) in the order.
+      - name: distinct_product_count
+        description: Number of distinct products in the order.
+      - name: distinct_seller_count
+        description: Number of distinct sellers in the order.
+      - name: items_subtotal_brl
+        description: Sum of item prices (BRL).
+      - name: freight_total_brl
+        description: Sum of item freight (BRL).
+      - name: order_gmv_brl
+        description: "{{ doc('order_gmv_brl') }}"
+      - name: first_shipping_limit_at
+        description: Earliest seller shipping deadline among the order's items.
+
+  - name: int_payments_pivoted_to_orders
+    description: Payments rolled up to one row per order, with the amount per payment method and a deterministic primary method.
+    columns:
+      - name: order_id
+        description: "{{ doc('order_id') }}"
+        data_tests:
+          - unique
+          - not_null
+      - name: payment_total_brl
+        description: "{{ doc('payment_total_brl') }}"
+      - name: primary_payment_type
+        description: Payment method with the largest amount (ties broken by the lowest payment_sequential).
+      - name: max_payment_installments
+        description: Largest installment count among the order's payments.
+
+  - name: int_reviews_deduplicated_to_orders
+    description: >
+      One review per order: the most recently answered survey (ties broken by survey date, then
+      review_id). `review_count` keeps how many answers the order had.
+    columns:
+      - name: order_id
+        description: "{{ doc('order_id') }}"
+        data_tests:
+          - unique
+          - not_null
+      - name: review_count
+        description: Number of survey answers recorded for the order (1-3).
+
+  - name: int_orders_classified
+    description: >
+      Order status and lifecycle logic: status group and valid-order flag (from the
+      `order_status_mapping` seed), delivery durations, the late-delivery flag, and
+      `lifecycle_anomalies`, a comma-separated list of contradictions between the source
+      timestamps.
+    data_tests:
+      - row_count_matches:
+          arguments:
+            compare_model: ref('stg_olist__orders')
+    columns:
+      - name: order_id
+        description: "{{ doc('order_id') }}"
+        data_tests:
+          - unique
+          - not_null
+      - name: order_status_group
+        description: "{{ doc('order_status_group') }}"
+        data_tests:
+          - not_null
+      - name: is_valid_order
+        description: "{{ doc('is_valid_order') }}"
+        data_tests:
+          - not_null
+      - name: is_late_delivery
+        description: "{{ doc('is_late_delivery') }}"
+      - name: lifecycle_anomalies
+        description: >
+          Comma-separated anomaly codes, null when the timestamps are consistent:
+          approved_before_purchase, carrier_before_purchase, carrier_before_approval,
+          delivered_before_carrier, delivered_before_approval, delivered_without_timestamp,
+          delivered_without_approval, canceled_with_delivery.
+
+  - name: int_orders_joined
+    description: >
+      Order-grain backbone: every order with its customer, item, payment and latest-review
+      aggregates. Children are aggregated before the join, so the model cannot fan out; the
+      row-count test proves it.
+    data_tests:
+      - row_count_matches:
+          arguments:
+            compare_model: ref('stg_olist__orders')
+    columns:
+      - name: order_id
+        description: "{{ doc('order_id') }}"
+        data_tests:
+          - unique
+          - not_null
+      - name: customer_unique_id
+        description: "{{ doc('customer_unique_id') }}"
+        data_tests:
+          - not_null
+      - name: data_quality_flags
+        description: "`lifecycle_anomalies` plus no_items, no_payment and payment_mismatch."
+
+  - name: int_geolocation_aggregated_to_zip_prefixes
+    description: >
+      One row per zip prefix: median coordinates of in-Brazil points and the most frequent
+      cleaned city/state.
+    columns:
+      - name: zip_code_prefix
+        description: "{{ doc('zip_code_prefix') }}"
+        data_tests:
+          - unique
+          - not_null
+      - name: latitude
+        description: Median latitude of the prefix.
+        data_tests:
+          - not_null
+      - name: longitude
+        description: Median longitude of the prefix.
+        data_tests:
+          - not_null
+      - name: point_count
+        description: Distinct points behind the median.
+
+  - name: int_customers_aggregated_to_persons
+    description: One row per person (customer_unique_id) with the latest address and order history.
+    data_tests:
+      - row_count_matches:
+          arguments:
+            compare_model: ref('stg_olist__customers')
+            compare_column: customer_unique_id
+    columns:
+      - name: customer_unique_id
+        description: "{{ doc('customer_unique_id') }}"
+        data_tests:
+          - unique
+          - not_null
+
+unit_tests:
+  - name: test_late_delivery_and_status_logic
+    description: >
+      Late = delivered on a later calendar day than the estimate (same day is on time);
+      delivery metrics only exist for delivered orders with a timestamp; canceled orders are
+      not valid orders; contradictory timestamps are flagged.
+    model: int_orders_classified
+    given:
+      - input: ref('stg_olist__orders')
+        rows:
+          - {order_id: on_time, customer_id: c1, order_status: delivered, order_purchased_at: "2018-01-01 10:00:00", order_approved_at: "2018-01-01 11:00:00", order_delivered_to_carrier_at: "2018-01-02 09:00:00", order_delivered_to_customer_at: "2018-01-10 23:59:00", order_estimated_delivery_date: "2018-01-10"}
+          - {order_id: late, customer_id: c2, order_status: delivered, order_purchased_at: "2018-01-01 10:00:00", order_approved_at: "2018-01-01 11:00:00", order_delivered_to_carrier_at: "2018-01-02 09:00:00", order_delivered_to_customer_at: "2018-01-11 08:00:00", order_estimated_delivery_date: "2018-01-10"}
+          - {order_id: canceled, customer_id: c3, order_status: canceled, order_purchased_at: "2018-01-01 10:00:00", order_approved_at: null, order_delivered_to_carrier_at: null, order_delivered_to_customer_at: "2018-01-05 08:00:00", order_estimated_delivery_date: "2018-01-10"}
+          - {order_id: pickup_first, customer_id: c4, order_status: shipped, order_purchased_at: "2018-01-01 10:00:00", order_approved_at: "2018-01-03 10:00:00", order_delivered_to_carrier_at: "2018-01-02 10:00:00", order_delivered_to_customer_at: null, order_estimated_delivery_date: "2018-01-20"}
+      - input: ref('order_status_mapping')
+        rows:
+          - {order_status: delivered, order_status_group: delivered, is_valid_order: true}
+          - {order_status: shipped, order_status_group: shipped, is_valid_order: true}
+          - {order_status: canceled, order_status_group: canceled, is_valid_order: false}
+    expect:
+      rows:
+        - {order_id: on_time, is_valid_order: true, delivery_days: 9, delivery_delay_days: 0, is_late_delivery: false, lifecycle_anomalies: null}
+        - {order_id: late, is_valid_order: true, delivery_days: 10, delivery_delay_days: 1, is_late_delivery: true, lifecycle_anomalies: null}
+        - {order_id: canceled, is_valid_order: false, delivery_days: null, delivery_delay_days: null, is_late_delivery: null, lifecycle_anomalies: canceled_with_delivery}
+        - {order_id: pickup_first, is_valid_order: true, delivery_days: null, delivery_delay_days: null, is_late_delivery: null, lifecycle_anomalies: carrier_before_approval}
+
+  - name: test_review_dedup_keeps_latest_answer
+    description: An order reviewed twice keeps the most recently answered review and counts both.
+    model: int_reviews_deduplicated_to_orders
+    given:
+      - input: ref('stg_olist__order_reviews')
+        rows:
+          - {order_review_key: k1, review_id: r_old, order_id: o1, review_score: 1, review_survey_sent_date: "2018-03-01", review_answered_at: "2018-03-02 10:00:00"}
+          - {order_review_key: k2, review_id: r_new, order_id: o1, review_score: 4, review_survey_sent_date: "2018-03-10", review_answered_at: "2018-03-11 10:00:00"}
+          - {order_review_key: k3, review_id: r_only, order_id: o2, review_score: 5, review_survey_sent_date: "2018-03-01", review_answered_at: "2018-03-03 10:00:00"}
+    expect:
+      rows:
+        - {order_id: o1, review_id: r_new, review_score: 4, review_count: 2}
+        - {order_id: o2, review_id: r_only, review_score: 5, review_count: 1}
+
+  - name: test_primary_payment_type_is_largest_amount
+    description: >
+      The primary payment method is the one with the largest amount; on a tie the lowest
+      payment_sequential wins. Amounts are pivoted per method.
+    model: int_payments_pivoted_to_orders
+    given:
+      - input: ref('stg_olist__order_payments')
+        rows:
+          - {payment_key: p1, order_id: o1, payment_sequential: 1, payment_type: voucher, payment_installments: 1, payment_value_brl: 20.00}
+          - {payment_key: p2, order_id: o1, payment_sequential: 2, payment_type: credit_card, payment_installments: 6, payment_value_brl: 80.00}
+          - {payment_key: p3, order_id: o2, payment_sequential: 1, payment_type: boleto, payment_installments: 1, payment_value_brl: 50.00}
+          - {payment_key: p4, order_id: o2, payment_sequential: 2, payment_type: voucher, payment_installments: 1, payment_value_brl: 50.00}
+    expect:
+      rows:
+        - {order_id: o1, payment_count: 2, payment_total_brl: 100.00, credit_card_amount_brl: 80.00, boleto_amount_brl: 0.00, voucher_amount_brl: 20.00, primary_payment_type: credit_card, max_payment_installments: 6, has_voucher_payment: true}
+        - {order_id: o2, payment_count: 2, payment_total_brl: 100.00, credit_card_amount_brl: 0.00, boleto_amount_brl: 50.00, voucher_amount_brl: 50.00, primary_payment_type: boleto, max_payment_installments: 1, has_voucher_payment: true}
+
+  - name: test_seller_city_cleaning
+    description: Free-text seller cities lose state suffixes and separators; values that are not a city become null.
+    model: stg_olist__sellers
+    given:
+      - input: source('olist', 'sellers')
+        rows:
+          - {seller_id: s1, seller_zip_code_prefix: "1001", seller_city: "sao paulo - sp", seller_state: "sp"}
+          - {seller_id: s2, seller_zip_code_prefix: "88501", seller_city: "novo hamburgo, rio grande do sul, brasil", seller_state: "RS"}
+          - {seller_id: s3, seller_zip_code_prefix: "22790", seller_city: "04482255", seller_state: "RJ"}
+          - {seller_id: s4, seller_zip_code_prefix: "83327", seller_city: "Pinhais/PR", seller_state: "PR"}
+          - {seller_id: s5, seller_zip_code_prefix: "76900", seller_city: "ji-parana", seller_state: "RO"}
+          - {seller_id: s6, seller_zip_code_prefix: "03363", seller_city: "sp / sp", seller_state: "SP"}
+          - {seller_id: s7, seller_zip_code_prefix: "01001", seller_city: "São  Paulo", seller_state: "SP"}
+    expect:
+      rows:
+        - {seller_id: s1, seller_zip_code_prefix: "01001", seller_city: sao paulo, seller_state: SP}
+        - {seller_id: s2, seller_zip_code_prefix: "88501", seller_city: novo hamburgo, seller_state: RS}
+        - {seller_id: s3, seller_zip_code_prefix: "22790", seller_city: null, seller_state: RJ}
+        - {seller_id: s4, seller_zip_code_prefix: "83327", seller_city: pinhais, seller_state: PR}
+        - {seller_id: s5, seller_zip_code_prefix: "76900", seller_city: ji-parana, seller_state: RO}
+        - {seller_id: s6, seller_zip_code_prefix: "03363", seller_city: null, seller_state: SP}
+        - {seller_id: s7, seller_zip_code_prefix: "01001", seller_city: sao paulo, seller_state: SP}

@@ -1,0 +1,106 @@
+seeds:
+  - name: order_status_mapping
+    description: >
+      Business definition of each order status (ADR 0002): reporting group, whether it counts
+      as a valid ("net") order, and whether it is a terminal state. Changing the official order
+      KPI means changing this file, reviewed by the Analytics Lead.
+    config:
+      column_types:
+        order_status: varchar
+        order_status_group: varchar
+        is_valid_order: boolean
+        is_terminal_status: boolean
+        status_sort_order: integer
+        status_description: varchar
+    columns:
+      - name: order_status
+        description: "{{ doc('order_status') }}"
+        data_tests:
+          - unique
+          - not_null
+      - name: order_status_group
+        description: "{{ doc('order_status_group') }}"
+        data_tests:
+          - not_null
+          - accepted_values:
+              arguments:
+                values: [awaiting_payment, processing, shipped, delivered, canceled, unavailable]
+      - name: is_valid_order
+        description: "{{ doc('is_valid_order') }}"
+        data_tests:
+          - not_null
+      - name: is_terminal_status
+        description: True when the order cannot move to another status (delivered, canceled, unavailable).
+      - name: status_sort_order
+        description: Lifecycle order, for sorting charts and tables.
+      - name: status_description
+        description: Plain-language meaning of the status.
+
+  - name: brazil_states
+    description: The 27 Brazilian federative units with their IBGE macro-region (reference data).
+    config:
+      column_types:
+        state_code: varchar
+        state_name: varchar
+        region_name: varchar
+        region_name_pt: varchar
+    columns:
+      - name: state_code
+        description: "{{ doc('state_code') }}"
+        data_tests:
+          - unique
+          - not_null
+      - name: state_name
+        description: State name.
+      - name: region_name
+        description: Macro-region in English (North, Northeast, Center-West, Southeast, South).
+        data_tests:
+          - accepted_values:
+              arguments:
+                values: [North, Northeast, Center-West, Southeast, South]
+      - name: region_name_pt
+        description: Macro-region in Portuguese.
+
+  - name: product_category_translation_overrides
+    description: English names for the 2 product categories missing from the source translation table.
+    config:
+      column_types:
+        product_category_name: varchar
+        product_category_name_english: varchar
+        reason: varchar
+    columns:
+      - name: product_category_name
+        description: Category in Portuguese.
+        data_tests:
+          - unique
+          - not_null
+      - name: product_category_name_english
+        description: Category in English (snake_case).
+        data_tests:
+          - not_null
+      - name: reason
+        description: Why the override exists.
+
+  - name: brazil_national_holidays
+    description: >
+      Brazilian national holidays 2016-2018. `optional` marks federal "pontos facultativos"
+      (Carnival, Corpus Christi) that most businesses observe. Movable dates derived from Easter.
+    config:
+      column_types:
+        holiday_date: date
+        holiday_name: varchar
+        holiday_type: varchar
+    columns:
+      - name: holiday_date
+        description: Calendar date of the holiday.
+        data_tests:
+          - unique
+          - not_null
+      - name: holiday_name
+        description: Holiday name in English.
+      - name: holiday_type
+        description: "`national` or `optional`."
+        data_tests:
+          - accepted_values:
+              arguments:
+                values: [national, optional]
