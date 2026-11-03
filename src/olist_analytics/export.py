@@ -116,7 +116,8 @@ def export_marts(con: duckdb.DuckDBPyConnection, out: Path) -> dict[str, int]:
 
 def export_sql_results(con: duckdb.DuckDBPyConnection, out: Path) -> list[str]:
     written = []
-    files = sorted(DQ_SQL_DIR.glob("*.sql")) + [METRICS_SQL_DIR / "01_three_analysts_on_raw.sql"]
+    files = sorted(DQ_SQL_DIR.glob("*.sql")) + [
+        METRICS_SQL_DIR / "01_three_analysts_on_raw.sql", METRICS_SQL_DIR / "03_customer_key_trap_on_raw.sql"]
     for path in files:
         for name, df in run_sql_file(con, path).items():
             if df is None:

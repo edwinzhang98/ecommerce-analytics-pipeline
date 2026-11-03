@@ -3,7 +3,9 @@
 -- Decision : whether retention (CRM) or acquisition should get the next marketing euro, and
 --            which first-order experiences go with lower repurchase (CRM manager).
 -- Inputs   : marts.fct_orders, marts.dim_customers, marts.customer_360
--- Output   : definition_sensitivity     - repeat rate under 4 definitions (why the official one)
+-- Output   : definition_sensitivity     - repeat rate under 3 definitions (why the official one;
+--                                         the per-order customer_id trap is shown on raw in
+--                                         sql/metrics/03_customer_key_trap_on_raw.sql)
 --            time_to_second_purchase    - how long repeaters take to come back
 --            cohort_repeat              - repurchase within N days by first-purchase month,
 --                                         only for cohorts observed for the full N days
@@ -39,12 +41,6 @@ net_orders as (
 
 ),
 
-by_order_customer_id as (
-
-    select count(*) as n from net_orders group by customer_id
-
-),
-
 by_person as (
 
     select
@@ -57,15 +53,21 @@ by_person as (
 
 )
 
-select 1 as sort_order, 'customer_id with 2+ orders (wrong key: issued per order)' as definition,
-    count(*) as customers, count(*) filter (where n >= 2) as repeat_customers
-from by_order_customer_id
+select
+    1 as sort_order,
+    'person with 2+ net orders' as definition,
+    count(*) as customers,
+    count(*) filter (where n_orders >= 2) as repeat_customers,
+    round(100.0 * repeat_customers / customers, 2) as repeat_rate_pct
+from by_person
 union all
-select 2, 'person with 2+ net orders', count(*), count(*) filter (where n_orders >= 2) from by_person
+select 2, 'person with 2+ checkouts (distinct purchase timestamps)', count(*),
+    count(*) filter (where n_checkouts >= 2), round(100.0 * count(*) filter (where n_checkouts >= 2) / count(*), 2)
+from by_person
 union all
-select 3, 'person with 2+ checkouts (distinct purchase timestamps)', count(*), count(*) filter (where n_checkouts >= 2) from by_person
-union all
-select 4, 'person with 2+ purchase days (official)', count(*), count(*) filter (where n_purchase_days >= 2) from by_person
+select 3, 'person with 2+ purchase days (official)', count(*),
+    count(*) filter (where n_purchase_days >= 2), round(100.0 * count(*) filter (where n_purchase_days >= 2) / count(*), 2)
+from by_person
 order by sort_order;
 
 -- result: time_to_second_purchase
