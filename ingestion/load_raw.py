@@ -8,10 +8,12 @@ Design choices (see docs/adr/0001-layered-architecture.md):
   * Every load writes one row per table to `raw.load_audit`: file size, md5,
     physical line count, parsed row count and the expected row count. A full load
     fails loudly if the parsed row count differs from `expected_row_counts.yml`.
-  * `--cutoff-date` loads only orders purchased before that date (plus their
-    child rows). It simulates an earlier extract so the incremental model can be
-    demonstrated (see scripts/check_incremental.py). `--hold-back-orders N`
-    additionally leaves out N older orders, to simulate records that arrive late.
+  * `--cutoff-date` simulates the extract as it would have looked on that date:
+    only orders purchased before it, lifecycle timestamps after it hidden (so an
+    order delivered later is still "shipped" or "processing"), and only reviews
+    answered before it. Used to prove the incremental model and the snapshot
+    (see scripts/check_incremental.py). `--hold-back-orders N` additionally leaves
+    out N older orders, to simulate records that arrive late.
 
 Usage:
     uv run python ingestion/load_raw.py
@@ -72,6 +74,35 @@ def read_csv_sql(path: Path) -> str:
     return f"read_csv('{path.as_posix()}', header = true, all_varchar = true)"
 
 
+def as_of_order_columns(cutoff_date: str) -> str:
+    """Order columns as they would have been on `cutoff_date`: events after it are hidden and a
+    delivered order whose delivery came later shows its status at that time. Values stay VARCHAR."""
+    t = f"date '{cutoff_date}'"
+
+    def known(col: str) -> str:
+        return f"case when try_cast({col} as timestamp) < {t} then {col} end"
+
+    return f"""
+        order_id,
+        customer_id,
+        case
+            when order_status = 'delivered' and not coalesce(try_cast(order_delivered_customer_date as timestamp) < {t}, false)
+                then case
+                    when try_cast(order_delivered_carrier_date as timestamp) < {t} then 'shipped'
+                    when try_cast(order_approved_at as timestamp) < {t} then 'processing'
+                    else 'created'
+                end
+            when order_status = 'shipped' and not coalesce(try_cast(order_delivered_carrier_date as timestamp) < {t}, false)
+                then 'processing'
+            else order_status
+        end as order_status,
+        order_purchase_timestamp,
+        {known('order_approved_at')} as order_approved_at,
+        {known('order_delivered_carrier_date')} as order_delivered_carrier_date,
+        {known('order_delivered_customer_date')} as order_delivered_customer_date,
+        order_estimated_delivery_date"""
+
+
 def load(raw_dir: Path, db_path: Path, expected_file: Path | None, cutoff_date: str | None,
          hold_back_orders: int = 0) -> list[dict]:
     missing = [f for f in SOURCE_FILES.values() if not (raw_dir / f).exists()]
@@ -129,11 +160,16 @@ def load(raw_dir: Path, db_path: Path, expected_file: Path | None, cutoff_date: 
         elif cutoff_date and table == "customers":
             where = "where customer_id in (select customer_id from _orders_in_scope)"
 
+        select_list = "*"
+        if cutoff_date and table == "orders":
+            select_list = as_of_order_columns(cutoff_date)
+        elif cutoff_date and table == "order_reviews":
+            where += f" and try_cast(review_answer_timestamp as timestamp) < date '{cutoff_date}'"
         con.execute(
             f"""
             create or replace table raw.{table} as
             select
-                *,
+                {select_list},
                 '{file_name}' as _source_file,
                 timestamp '{loaded_at}' as _loaded_at
             from {read_csv_sql(path)}

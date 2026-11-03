@@ -3,8 +3,12 @@
 Runs in its own DuckDB file so it never touches the main warehouse.
 
 Scenario A, normal batches:
-  1. load an earlier extract (orders before --cutoff) and build fct_order_items with --full-refresh
-  2. load the full extract and run fct_order_items incrementally
+  1. load the extract as it looked on --cutoff (orders delivered later are still "shipped" or
+     "processing") and build fct_order_items with --full-refresh; snapshot order status
+  2. load the full extract and run fct_order_items incrementally; snapshot again
+     -> new orders are added, and open orders whose status changed are updated even when they are
+        older than the lookback window (the "re-process open orders" rule)
+     -> the snapshot holds a second version for every order whose status moved
   3. run it again with no new data (idempotency: nothing may change)
   4. rebuild with --full-refresh and compare: incremental == full refresh, row for row
 
@@ -27,6 +31,7 @@ import os
 import subprocess
 import sys
 import time
+from datetime import timedelta
 from pathlib import Path
 
 import duckdb
@@ -41,7 +46,7 @@ select
     sum(item_total_brl) as total_brl,
     md5(string_agg(
         concat_ws('|', order_item_key, order_id, order_item_id, product_id, seller_id, customer_unique_id,
-                  order_purchase_date, order_purchased_at, shipping_limit_at,
+                  order_purchase_date, order_status, is_net_order, order_purchased_at, shipping_limit_at,
                   item_price_brl, freight_value_brl, item_total_brl),
         ',' order by order_item_key
     )) as checksum
@@ -67,6 +72,25 @@ def snapshot(db_path: Path) -> dict:
     con.close()
     return {"rows": row_count, "staged_rows": staged, "total_brl": float(total or 0),
             "checksum": checksum, "watermark": str(watermark)}
+
+
+def item_statuses(db_path: Path) -> dict[str, tuple]:
+    con = duckdb.connect(str(db_path), read_only=True)
+    rows = con.execute("select order_item_key, order_status, order_purchased_at from marts.fct_order_items").fetchall()
+    con.close()
+    return {key: (status, purchased_at) for key, status, purchased_at in rows}
+
+
+def snapshot_versions(db_path: Path) -> dict:
+    con = duckdb.connect(str(db_path), read_only=True)
+    orders_with_history, versions = con.execute(
+        """
+        select count(*) filter (where n > 1), sum(n)
+        from (select order_id, count(*) as n from snapshots.snp_olist__orders group by order_id)
+        """
+    ).fetchone()
+    con.close()
+    return {"orders_with_2plus_versions": int(orders_with_history or 0), "snapshot_rows": int(versions or 0)}
 
 
 def rows_in_window(db_path: Path, watermark: str, lookback_days: int) -> int:
@@ -115,11 +139,19 @@ def main() -> int:
     run(load + ["--cutoff-date", args.cutoff], env, REPO_ROOT)
     run(dbt + ["seed"] + flags, env, dbt_dir)
     run(dbt + ["run"] + flags + select_models + ["--full-refresh"], env, dbt_dir)
+    run(dbt + ["snapshot"] + flags, env, dbt_dir)
     batch_1 = snapshot(args.db)
+    statuses_1 = item_statuses(args.db)
     run(load + ["--expected", str(args.expected)], env, REPO_ROOT)
-    reprocessed = rows_in_window(args.db, batch_1["watermark"], args.lookback_days)
+    in_window = rows_in_window(args.db, batch_1["watermark"], args.lookback_days)
     run(dbt + ["run"] + flags + select_models, env, dbt_dir)
+    run(dbt + ["snapshot"] + flags, env, dbt_dir)
     incremental = snapshot(args.db)
+    statuses_2 = item_statuses(args.db)
+    changed = [k for k, v in statuses_1.items() if statuses_2.get(k, (None,))[0] != v[0]]
+    window_start = max(v[1] for v in statuses_1.values()) - timedelta(days=args.lookback_days)
+    changed_outside_window = [k for k in changed if statuses_1[k][1] < window_start]
+    history = snapshot_versions(args.db)
     run(dbt + ["run"] + flags + select_models, env, dbt_dir)
     rerun = snapshot(args.db)
     run(dbt + ["run"] + flags + ["--select", "fct_order_items", "--full-refresh"], env, dbt_dir)
@@ -127,7 +159,10 @@ def main() -> int:
     result["scenario_a"] = {
         "batch_1_rows": batch_1["rows"],
         "batch_1_watermark": batch_1["watermark"],
-        "rows_processed_by_incremental_run": reprocessed,
+        "new_or_recent_rows_in_lookback_window": in_window,
+        "older_rows_whose_status_changed": len(changed),
+        "of_which_outside_lookback_window": len(changed_outside_window),
+        "orders_with_status_history_in_snapshot": history["orders_with_2plus_versions"],
         "rows_after_incremental": incremental["rows"],
         "rows_after_rerun": rerun["rows"],
         "rows_after_full_refresh": full_refresh["rows"],
@@ -160,6 +195,7 @@ def main() -> int:
     a, b = result["scenario_a"], result["scenario_b"]
     ok = (a["rerun_identical"] and a["incremental_equals_full_refresh"]
           and a["rows_after_full_refresh"] == a["staged_rows"]
+          and a["of_which_outside_lookback_window"] > 0 and a["orders_with_status_history_in_snapshot"] > 0
           and b["rows_missed_by_incremental"] > 0 and b["repaired_equals_scenario_a"])
     result["passed"] = bool(ok)
     args.out.parent.mkdir(parents=True, exist_ok=True)
@@ -169,7 +205,10 @@ def main() -> int:
     print(f"""
 Scenario A (normal):
   batch 1 (orders < {args.cutoff}): {a['batch_1_rows']:,} rows, watermark {a['batch_1_watermark']}
-  incremental run processed {a['rows_processed_by_incremental_run']:,} rows -> {a['rows_after_incremental']:,} rows
+  incremental run: {a['new_or_recent_rows_in_lookback_window']:,} rows in the lookback window + open orders
+    -> {a['rows_after_incremental']:,} rows; {a['older_rows_whose_status_changed']:,} existing rows changed status and were updated,
+       {a['of_which_outside_lookback_window']:,} of them older than the lookback window (caught by the open-order rule)
+  snapshot captured a second version for {a['orders_with_status_history_in_snapshot']:,} orders
   re-run with no new data identical: {a['rerun_identical']}
   incremental == full refresh (row-level checksum): {a['incremental_equals_full_refresh']}
 Scenario B (late-arriving, {b['held_back_orders']} orders older than the lookback):

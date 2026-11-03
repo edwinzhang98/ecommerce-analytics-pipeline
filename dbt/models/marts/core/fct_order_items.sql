@@ -1,15 +1,22 @@
 {#
     fct_order_items — one row per unit sold (order line). Incremental (ADR 0005).
 
-    Why this model is incremental: an item row never changes after the order is placed
-    (price, freight, product, seller, shipping limit are fixed at purchase), so only new
-    orders need processing. Mutable order state (status, delivery, review) deliberately
-    lives in fct_orders, which is rebuilt in full on every run.
+    What each run processes (delete+insert on order_item_key):
+      1. new orders: purchased since the newest purchase already loaded, minus a
+         `fct_order_items_lookback_days` safety window for rows that land a little late;
+      2. every order that was still OPEN at the last run (status not terminal per the
+         order_status_mapping seed), because its status, and so `is_net_order`, may have changed.
+    Item attributes (price, freight, product, seller, shipping limit) never change after purchase,
+    and terminal statuses (delivered, canceled, unavailable) never change by definition, so rows
+    outside 1 and 2 cannot be stale.
 
-    Each run re-processes the last `fct_order_items_lookback_days` days before the newest
-    purchase already loaded, to pick up rows that arrive late; `unique_key` +
-    delete+insert make the re-processing idempotent.
+    Known limit: a row that arrives more than the lookback window after newer purchases were loaded
+    is skipped. The grain test fct_order_items_has_one_row_per_source_item then fails, and the fix
+    is `dbt build --full-refresh -s fct_order_items` (proved in scripts/check_incremental.py).
 #}
+
+-- the seed is only referenced inside the incremental branch, so declare the dependency:
+-- depends_on: {{ ref('order_status_mapping') }}
 
 {{
     config(
@@ -34,15 +41,25 @@ orders as (
         order_id,
         customer_unique_id,
         order_purchased_at,
-        order_purchase_date
+        order_purchase_date,
+        order_status,
+        is_net_order
 
     from {{ ref('int_orders_joined') }}
 
     {% if is_incremental() %}
-    where order_purchased_at >= (
-        select max(order_purchased_at) - interval '{{ var("fct_order_items_lookback_days") }} days'
-        from {{ this }}
-    )
+    where
+        order_purchased_at >= (
+            select max(order_purchased_at) - interval '{{ var("fct_order_items_lookback_days") }} days'
+            from {{ this }}
+        )
+        or order_id in (
+            select loaded.order_id
+            from {{ this }} as loaded
+            inner join {{ ref('order_status_mapping') }} as status_mapping
+                on loaded.order_status = status_mapping.order_status
+            where not status_mapping.is_terminal_status
+        )
     {% endif %}
 
 ),
@@ -58,6 +75,10 @@ final as (
         cast(order_items.seller_id as varchar) as seller_id,
         cast(orders.customer_unique_id as varchar) as customer_unique_id,
         cast(orders.order_purchase_date as date) as order_purchase_date,
+
+        -- order status, so item-level sums can be restricted to net orders without a join
+        cast(orders.order_status as varchar) as order_status,
+        cast(orders.is_net_order as boolean) as is_net_order,
 
         -- timestamps (local time, America/Sao_Paulo)
         cast(orders.order_purchased_at as timestamp) as order_purchased_at,

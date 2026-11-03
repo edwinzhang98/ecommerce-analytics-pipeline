@@ -1,8 +1,9 @@
 {#
     fct_orders — one row per order placed on the marketplace, in any status.
-    The single source of truth for order counts (ADR 0002):
+    The single source of truth for order counts (ADR 0002). The source's per-order
+    `customer_id` is deliberately not exposed: people are counted with customer_unique_id.
       placed orders    = count(*)
-      net orders (KPI) = count(*) filter (where is_valid_order)
+      net orders (KPI) = count(*) filter (where is_net_order)
       delivered orders = count(*) filter (where is_delivered)
 #}
 
@@ -20,14 +21,20 @@ final as (
         -- keys
         cast(order_id as varchar) as order_id,
         cast(customer_unique_id as varchar) as customer_unique_id,
-        cast(customer_id as varchar) as customer_id,
         cast(order_purchase_date as date) as order_purchase_date,
+
+        -- delivery address of this order (where the order was shipped)
+        cast(delivery_zip_code_prefix as varchar) as delivery_zip_code_prefix,
+        cast(delivery_city as varchar) as delivery_city,
+        cast(delivery_state as varchar) as delivery_state,
+        cast(delivery_region as varchar) as delivery_region,
 
         -- status
         cast(order_status as varchar) as order_status,
         cast(order_status_group as varchar) as order_status_group,
-        cast(is_valid_order as boolean) as is_valid_order,
+        cast(is_net_order as boolean) as is_net_order,
         cast(is_delivered as boolean) as is_delivered,
+        cast(is_terminal_status as boolean) as is_terminal_status,
 
         -- lifecycle timestamps (local time, America/Sao_Paulo)
         cast(order_purchased_at as timestamp) as order_purchased_at,
@@ -77,6 +84,8 @@ final as (
         cast(has_items as boolean) as has_items,
         cast(has_payment as boolean) as has_payment,
         cast(is_payment_mismatch as boolean) as is_payment_mismatch,
+        cast(lifecycle_anomalies is not null as boolean) as has_lifecycle_anomaly,
+        cast(data_quality_flags is not null as boolean) as has_data_quality_flag,
         cast(data_quality_flags as varchar) as data_quality_flags
 
     from orders

@@ -8,7 +8,7 @@ models:
       **One row per order placed on the marketplace, in any status** (99,441 rows).
       The single source of truth for order counts and order-level revenue, delivery and review
       outcomes. Placed orders = `count(*)`; **net orders (official KPI) =
-      `count(*) filter (where is_valid_order)`**; delivered orders =
+      `count(*) filter (where is_net_order)`**; delivered orders =
       `count(*) filter (where is_delivered)` (ADR 0002). Date basis: `order_purchase_date`.
       Rebuilt in full on every run (it holds mutable order state).
     config:
@@ -22,6 +22,18 @@ models:
           name: fct_orders_has_one_row_per_source_order
           arguments:
             compare_model: ref('stg_olist__orders')
+      - dbt_utils.expression_is_true:
+          name: known_issue__net_orders_without_payment
+          arguments:
+            expression: "has_payment"
+          config:
+            where: "is_net_order"
+            warn_if: ">1"
+            error_if: ">10"
+            store_failures: true
+            tags: [known_issue]
+            meta:
+              dq_issue: DQ-08
       - sum_matches:
           name: fct_orders_payments_reconcile_with_staging
           arguments:
@@ -34,6 +46,7 @@ models:
         data_type: varchar
         constraints:
           - type: not_null
+          - type: primary_key
         data_tests:
           - unique
           - not_null
@@ -46,12 +59,6 @@ models:
               arguments:
                 to: ref('dim_customers')
                 field: customer_unique_id
-      - name: customer_id
-        description: "{{ doc('customer_id') }} Kept for traceability to the source only."
-        data_type: varchar
-        data_tests:
-          - unique
-          - not_null
       - name: order_purchase_date
         description: "{{ doc('order_purchase_date') }}"
         data_type: date
@@ -61,6 +68,30 @@ models:
               arguments:
                 to: ref('dim_date')
                 field: date_day
+      - name: delivery_zip_code_prefix
+        description: >
+          {{ doc('zip_code_prefix') }} Of the address on this order. Olist issues one customer
+          record per order, which the source documents as the order's delivery location.
+        data_type: varchar
+      - name: delivery_city
+        description: City the order was delivered to (lower-case, no accents).
+        data_type: varchar
+      - name: delivery_state
+        description: >
+          State the order was delivered to. **Use this for geography of orders and deliveries**;
+          `dim_customers.customer_state` is the person's latest address instead.
+        data_type: varchar
+        data_tests:
+          - not_null
+          - relationships:
+              arguments:
+                to: ref('brazil_states')
+                field: state_code
+      - name: delivery_region
+        description: Macro-region the order was delivered to.
+        data_type: varchar
+        data_tests:
+          - not_null
       - name: order_status
         description: "{{ doc('order_status') }}"
         data_type: varchar
@@ -77,13 +108,21 @@ models:
           - accepted_values:
               arguments:
                 values: [awaiting_payment, processing, shipped, delivered, canceled, unavailable]
-      - name: is_valid_order
-        description: "{{ doc('is_valid_order') }}"
+      - name: is_net_order
+        description: "{{ doc('is_net_order') }}"
         data_type: boolean
         data_tests:
           - not_null
       - name: is_delivered
         description: "{{ doc('is_delivered') }}"
+        data_type: boolean
+        data_tests:
+          - not_null
+      - name: is_terminal_status
+        description: >
+          True when the status can no longer change (delivered, canceled, unavailable). False for
+          the 1,729 open orders (created, approved, invoiced, processing, shipped); they count as net
+          orders, but some open "shipped" orders are months old and will probably never be delivered.
         data_type: boolean
         data_tests:
           - not_null
@@ -128,6 +167,17 @@ models:
         data_type: integer
         data_tests:
           - non_negative
+          - dbt_utils.accepted_range:
+              name: known_issue__deliveries_over_120_days
+              arguments:
+                max_value: 120
+              config:
+                warn_if: ">43"
+                error_if: ">300"
+                store_failures: true
+                tags: [known_issue]
+                meta:
+                  dq_issue: DQ-13
       - name: estimated_delivery_days
         description: Calendar days from purchase date to the estimated delivery date.
         data_type: integer
@@ -243,37 +293,38 @@ models:
         data_type: boolean
         data_tests:
           - not_null
-          - accepted_values:
-              name: known_issue__valid_orders_without_payment
-              arguments:
-                values: [true]
-                quote: false
-              config:
-                where: "is_valid_order"
-                warn_if: ">1"
-                error_if: ">10"
-                tags: [known_issue]
-                meta:
-                  dq_issue: DQ-09
       - name: is_payment_mismatch
         description: >
           True when the order has items and payments and they differ by more than
           `payment_mismatch_tolerance_brl` (default R$1.00).
         data_type: boolean
+      - name: has_lifecycle_anomaly
+        description: True when the order's lifecycle timestamps contradict each other (DQ-14).
+        data_type: boolean
+        data_tests:
+          - not_null
+      - name: has_data_quality_flag
+        description: True when `data_quality_flags` is not null. Filter on this to include or exclude flagged orders.
+        data_type: boolean
+        data_tests:
+          - not_null
       - name: data_quality_flags
         description: >
-          Comma-separated data-quality codes, null when clean. Lifecycle codes (carrier_before_approval,
-          delivered_before_carrier, ...) plus no_items, no_payment, payment_mismatch. Use it to exclude
-          or inspect suspicious orders; it never removes rows.
+          Human-readable audit trail: comma-separated data-quality codes, null when clean. Lifecycle
+          codes (carrier_before_approval, delivered_before_carrier, ...) plus no_items, no_payment,
+          payment_mismatch. For filtering use the booleans (has_items, has_payment, is_payment_mismatch,
+          has_lifecycle_anomaly, has_data_quality_flag); flags never remove rows.
         data_type: varchar
 
   - name: fct_order_items
     description: >
       **One row per unit sold (order line)** (112,650 rows). Item price, freight, product and
-      seller as fixed at purchase. **Incremental** (ADR 0005): rows never change after purchase,
-      so each run only processes orders purchased since the last load (with a
-      `fct_order_items_lookback_days` safety window). For status, delivery or review, join to
-      `fct_orders` on `order_id` (many-to-one, safe).
+      seller as fixed at purchase, plus the order's current status and `is_net_order`, so
+      item-level sums can be restricted to net orders without a join. **Sum `item_total_brl`
+      only where `is_net_order`** to get net GMV by product, category or seller.
+      **Incremental** (ADR 0005): each run processes new orders (with a
+      `fct_order_items_lookback_days` window) plus every order that was still open at the last run.
+      For delivery or review outcomes, join to `fct_orders` on `order_id` (many-to-one, safe).
     config:
       contract:
         enforced: true
@@ -295,12 +346,22 @@ models:
             compare_model: ref('fct_orders')
             compare_column: order_gmv_brl
             tolerance: 0
+      - sum_matches:
+          name: item_net_gmv_reconciles_with_order_net_gmv
+          arguments:
+            column_name: item_total_brl
+            model_filter: is_net_order
+            compare_model: ref('fct_orders')
+            compare_column: order_gmv_brl
+            compare_filter: is_net_order
+            tolerance: 0
     columns:
       - name: order_item_key
         description: "{{ doc('order_item_key') }}"
         data_type: varchar
         constraints:
           - type: not_null
+          - type: primary_key
         data_tests:
           - unique
           - not_null
@@ -354,6 +415,16 @@ models:
               arguments:
                 to: ref('dim_date')
                 field: date_day
+      - name: order_status
+        description: "{{ doc('order_status') }} Current status of the item's order."
+        data_type: varchar
+        data_tests:
+          - not_null
+      - name: is_net_order
+        description: "{{ doc('is_net_order') }} Filter on it before summing item amounts."
+        data_type: boolean
+        data_tests:
+          - not_null
       - name: order_purchased_at
         description: "{{ doc('order_purchased_at') }} Also the incremental watermark."
         data_type: timestamp
@@ -386,8 +457,8 @@ models:
       **One row per person (`customer_unique_id`)** (96,096 rows), including the 1,100+ people
       whose only orders were canceled or unavailable. Location comes from the person's most
       recent order. Carries the RFM inputs: **R = `recency_days`, F = `frequency_orders`,
-      M = `monetary_gmv_brl`** (valid orders only), measured against `rfm_reference_date`, the
-      last valid purchase date in the data.
+      M = `monetary_gmv_brl`** (net orders only), measured against `rfm_reference_date`, the
+      last net-order purchase date in the data.
     config:
       contract:
         enforced: true
@@ -406,7 +477,7 @@ models:
             column_name: monetary_gmv_brl
             compare_model: ref('fct_orders')
             compare_column: order_gmv_brl
-            compare_filter: is_valid_order
+            compare_filter: is_net_order
             tolerance: 0
     columns:
       - name: customer_unique_id
@@ -414,6 +485,7 @@ models:
         data_type: varchar
         constraints:
           - type: not_null
+          - type: primary_key
         data_tests:
           - unique
           - not_null
@@ -457,49 +529,49 @@ models:
       - name: first_order_at
         description: First order in any status. {{ doc('local_timestamp') }}
         data_type: timestamp
-      - name: first_valid_order_at
-        description: First valid order. Null when the person has none.
+      - name: first_net_order_at
+        description: First net order. Null when the person has none.
         data_type: timestamp
-      - name: last_valid_order_at
-        description: Most recent valid order.
+      - name: last_net_order_at
+        description: Most recent net order.
         data_type: timestamp
       - name: purchase_days
         description: >
-          Distinct calendar days with a valid order. Used for repeat status because one checkout
+          Distinct calendar days with a net order. Used for repeat status because one checkout
           can be split into several orders in the same second.
         data_type: integer
-      - name: has_valid_order
-        description: True when the person has at least one valid (non-canceled, available) order.
+      - name: has_net_order
+        description: True when the person has at least one net order (not canceled or unavailable).
         data_type: boolean
         data_tests:
           - not_null
       - name: is_repeat_customer
-        description: True when the person bought on at least 2 different days (valid orders).
+        description: True when the person bought on at least 2 different days (net orders).
         data_type: boolean
         data_tests:
           - not_null
       - name: rfm_reference_date
-        description: The "today" used for recency, i.e. the last valid purchase date in the data (the extract is historical).
+        description: The "today" used for recency, i.e. the last net-order purchase date in the data (the extract is historical).
         data_type: date
       - name: recency_days
-        description: "RFM recency: days from the last valid order to `rfm_reference_date`. Null without valid orders."
+        description: "RFM recency: days from the last net order to `rfm_reference_date`. Null without net orders."
         data_type: integer
         data_tests:
           - non_negative
       - name: frequency_orders
-        description: "RFM frequency: number of valid orders."
+        description: "RFM frequency: number of net orders."
         data_type: integer
         data_tests:
           - not_null
           - non_negative
       - name: monetary_gmv_brl
-        description: "RFM monetary: GMV (items + freight) of the person's valid orders, in BRL."
+        description: "RFM monetary: GMV (items + freight) of the person's net orders, in BRL."
         data_type: decimal(18,2)
         data_tests:
           - not_null
           - non_negative
       - name: avg_order_value_brl
-        description: "`monetary_gmv_brl / frequency_orders`. Null without valid orders."
+        description: "`monetary_gmv_brl / frequency_orders`. Null without net orders."
         data_type: decimal(18,2)
 
   - name: dim_products
@@ -522,6 +594,7 @@ models:
         data_type: varchar
         constraints:
           - type: not_null
+          - type: primary_key
         data_tests:
           - unique
           - not_null
@@ -583,6 +656,7 @@ models:
         data_type: varchar
         constraints:
           - type: not_null
+          - type: primary_key
         data_tests:
           - unique
           - not_null
@@ -620,6 +694,8 @@ models:
         data_type: double
 
   - name: dim_date
+    time_spine:
+      standard_granularity_column: date_day
     description: >
       **One row per calendar day from 2016-01-01 to 2018-12-31.** Brazilian national holidays,
       Black Friday, and `is_complete_data_month` (true for 2017-01 to 2018-08; use it to keep
@@ -638,8 +714,10 @@ models:
       - name: date_day
         description: The calendar date (primary key).
         data_type: date
+        granularity: day
         constraints:
           - type: not_null
+          - type: primary_key
         data_tests:
           - unique
           - not_null

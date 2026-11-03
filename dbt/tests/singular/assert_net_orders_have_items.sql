@@ -1,6 +1,6 @@
 {#
-    DQ-09 baseline: a valid (not canceled / unavailable) order should contain at least one item.
-    8 orders in the source do not (5 created, 2 invoiced, 1 shipped). They stay in fct_orders
+    DQ-08 baseline: a net order (not canceled / unavailable) should contain at least one item.
+    8 net orders in the source do not (5 created, 2 invoiced, 1 shipped). They stay in fct_orders
     with GMV 0 and the `no_items` flag.
 #}
 
@@ -10,7 +10,7 @@
         error_if='>100',
         store_failures=true,
         tags=['known_issue'],
-        meta={'dq_issue': 'DQ-09'}
+        meta={'dq_issue': 'DQ-08'}
     )
 }}
 
@@ -20,5 +20,5 @@ select
     order_purchased_at
 
 from {{ ref('fct_orders') }}
-where is_valid_order
+where is_net_order
     and not has_items

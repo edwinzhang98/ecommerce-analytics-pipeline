@@ -34,7 +34,7 @@ jobs:
           enable-cache: true
 
       - name: Install dependencies (locked)
-        run: uv sync --frozen
+        run: uv sync --frozen --group semantic
 
       - name: dbt deps
         working-directory: dbt
@@ -59,6 +59,25 @@ jobs:
         run: >
           uv run dbt build --profiles-dir . --target ci
           --vars '{min_net_orders_per_complete_month: 50}'
+
+      - name: Known-issue tests detect their planted issues (not just pass)
+        run: uv run python ci/check_known_issues_detected.py
+
+      - name: Source freshness (of the load)
+        working-directory: dbt
+        run: uv run dbt source freshness --profiles-dir . --target ci
+
+      - name: Best-practice lint (dbt_project_evaluator; any violation fails)
+        working-directory: dbt
+        run: |
+          uv run dbt build --profiles-dir . --target ci \
+            --select package:dbt_project_evaluator dbt_project_evaluator_exceptions \
+            --vars '{run_project_evaluator: true}'
+          uv run python ../ci/check_run_results.py
+
+      - name: Semantic layer smoke test (MetricFlow)
+        working-directory: dbt
+        run: uv run --group semantic mf query --metrics net_orders,net_gmv_brl --group-by metric_time__year
 
       - name: Incremental model check (incremental == full refresh; late data is caught)
         run: >

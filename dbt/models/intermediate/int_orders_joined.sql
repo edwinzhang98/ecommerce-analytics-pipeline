@@ -13,9 +13,24 @@ orders as (
 
 ),
 
+-- Olist issues one customer record per order, holding the address used for that order:
+-- per the source documentation it is the order's delivery location.
 customers as (
 
-    select customer_id, customer_unique_id from {{ ref('stg_olist__customers') }}
+    select
+        customer_id,
+        customer_unique_id,
+        customer_zip_code_prefix,
+        customer_city,
+        customer_state
+
+    from {{ ref('stg_olist__customers') }}
+
+),
+
+states as (
+
+    select state_code, region_name from {{ ref('brazil_states') }}
 
 ),
 
@@ -42,6 +57,12 @@ joined as (
     select
         orders.*,
         customers.customer_unique_id,
+
+        -- delivery address of this order
+        customers.customer_zip_code_prefix as delivery_zip_code_prefix,
+        customers.customer_city as delivery_city,
+        customers.customer_state as delivery_state,
+        states.region_name as delivery_region,
 
         -- items
         items.order_id is not null as has_items,
@@ -75,6 +96,8 @@ joined as (
     from orders
     left join customers
         on orders.customer_id = customers.customer_id
+    left join states
+        on customers.customer_state = states.state_code
     left join items
         on orders.order_id = items.order_id
     left join payments

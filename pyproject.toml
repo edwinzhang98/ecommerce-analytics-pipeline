@@ -28,6 +28,8 @@ dependencies = [
 [dependency-groups]
 # Only needed to regenerate the README screenshots (`make screenshots`).
 screenshots = ["playwright>=1.45"]
+# MetricFlow CLI for querying the semantic layer (`make metrics`).
+semantic = ["dbt-metricflow>=0.15"]
 
 [build-system]
 requires = ["hatchling"]

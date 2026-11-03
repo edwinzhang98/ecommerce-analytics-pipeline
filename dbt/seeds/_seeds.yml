@@ -2,13 +2,13 @@ seeds:
   - name: order_status_mapping
     description: >
       Business definition of each order status (ADR 0002): reporting group, whether it counts
-      as a valid ("net") order, and whether it is a terminal state. Changing the official order
+      as a net order (the official order KPI), and whether it is a terminal state. Changing the official order
       KPI means changing this file, reviewed by the Analytics Lead.
     config:
       column_types:
         order_status: varchar
         order_status_group: varchar
-        is_valid_order: boolean
+        is_net_order: boolean
         is_terminal_status: boolean
         status_sort_order: integer
         status_description: varchar
@@ -25,8 +25,8 @@ seeds:
           - accepted_values:
               arguments:
                 values: [awaiting_payment, processing, shipped, delivered, canceled, unavailable]
-      - name: is_valid_order
-        description: "{{ doc('is_valid_order') }}"
+      - name: is_net_order
+        description: "{{ doc('is_net_order') }}"
         data_tests:
           - not_null
       - name: is_terminal_status

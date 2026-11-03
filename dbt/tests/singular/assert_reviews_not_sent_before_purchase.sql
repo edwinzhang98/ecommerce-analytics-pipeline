@@ -1,5 +1,5 @@
 {#
-    DQ-14 baseline: a satisfaction survey cannot be sent before the order was placed.
+    DQ-15 baseline: a satisfaction survey cannot be sent before the order was placed.
     64 review rows in the source are dated before the purchase date. Kept (the score is still
     the customer's answer) but monitored.
 #}
@@ -10,7 +10,7 @@
         error_if='>500',
         store_failures=true,
         tags=['known_issue'],
-        meta={'dq_issue': 'DQ-14'}
+        meta={'dq_issue': 'DQ-15'}
     )
 }}
 

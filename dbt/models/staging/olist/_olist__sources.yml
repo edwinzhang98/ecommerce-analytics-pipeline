@@ -6,6 +6,11 @@ sources:
       typing and cleaning happen in staging. Each table carries `_source_file` and `_loaded_at`.
     schema: raw
     config:
+      # freshness of the LOAD (not of the business data, which ends in 2018)
+      loaded_at_field: _loaded_at
+      freshness:
+        warn_after: {count: 7, period: day}
+        error_after: {count: 30, period: day}
       meta:
         owner: analytics-engineering
         loader: ingestion/load_raw.py
@@ -127,6 +132,8 @@ sources:
               - unique
               - not_null
       - name: load_audit
+        config:
+          loaded_at_field: loaded_at
         description: >
           Written by `ingestion/load_raw.py`: one row per loaded table with file size, md5,
           physical line count, parsed row count and the expected row count of the release.

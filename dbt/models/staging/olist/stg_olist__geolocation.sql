@@ -19,7 +19,7 @@ renamed as (
         lpad(trim(geolocation_zip_code_prefix), 5, '0') as zip_code_prefix,
         cast(geolocation_lat as double) as latitude,
         cast(geolocation_lng as double) as longitude,
-        {{ clean_city_name('geolocation_city') }} as city,
+        {{ clean_city_name('geolocation_city', 'geolocation_state') }} as city,
         upper(trim(geolocation_state)) as state_code
 
     from source

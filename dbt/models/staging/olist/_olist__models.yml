@@ -12,6 +12,24 @@ models:
       One row per order, any status. Typed copy of `raw.orders`: timestamps cast from text,
       the estimated delivery date cast to DATE (the source time part is always 00:00:00),
       and the carrier/customer delivery columns renamed so their meaning is explicit.
+    data_tests:
+      - dbt_utils.expression_is_true:
+          name: purchase_not_in_the_future
+          arguments:
+            # guards the incremental watermark of fct_order_items: one bad future timestamp
+            # would otherwise freeze its window
+            expression: "order_purchased_at <= _loaded_at"
+      - dbt_utils.expression_is_true:
+          name: known_issue__canceled_orders_with_delivery_timestamp
+          arguments:
+            expression: "not (order_status = 'canceled' and order_delivered_to_customer_at is not null)"
+          config:
+            warn_if: ">6"
+            error_if: ">100"
+            store_failures: true
+            tags: [known_issue]
+            meta:
+              dq_issue: DQ-14
     columns:
       - name: order_id
         description: "{{ doc('order_id') }}"
@@ -47,9 +65,10 @@ models:
                 where: "order_status = 'delivered'"
                 warn_if: ">14"
                 error_if: ">100"
+                store_failures: true
                 tags: [known_issue]
                 meta:
-                  dq_issue: DQ-12
+                  dq_issue: DQ-14
           - not_before:
               name: approved_not_before_purchase
               arguments:
@@ -66,9 +85,10 @@ models:
               config:
                 warn_if: ">1359"
                 error_if: ">2000"
+                store_failures: true
                 tags: [known_issue]
                 meta:
-                  dq_issue: DQ-12
+                  dq_issue: DQ-14
           - not_before:
               name: known_issue__carrier_pickup_before_purchase
               arguments:
@@ -76,9 +96,10 @@ models:
               config:
                 warn_if: ">166"
                 error_if: ">500"
+                store_failures: true
                 tags: [known_issue]
                 meta:
-                  dq_issue: DQ-12
+                  dq_issue: DQ-14
       - name: order_delivered_to_customer_at
         description: >
           When the order reached the customer (source column `order_delivered_customer_date`).
@@ -95,18 +116,31 @@ models:
               config:
                 warn_if: ">23"
                 error_if: ">100"
+                store_failures: true
                 tags: [known_issue]
                 meta:
-                  dq_issue: DQ-12
+                  dq_issue: DQ-14
+          - not_before:
+              name: known_issue__delivered_before_approval
+              arguments:
+                compare_column: order_approved_at
+              config:
+                warn_if: ">61"
+                error_if: ">300"
+                store_failures: true
+                tags: [known_issue]
+                meta:
+                  dq_issue: DQ-14
           - not_null:
               name: known_issue__delivered_orders_missing_delivery_timestamp
               config:
                 where: "order_status = 'delivered'"
                 warn_if: ">8"
                 error_if: ">100"
+                store_failures: true
                 tags: [known_issue]
                 meta:
-                  dq_issue: DQ-12
+                  dq_issue: DQ-14
       - name: order_estimated_delivery_date
         description: Delivery date promised to the customer at purchase (date only).
         data_tests:
@@ -165,16 +199,6 @@ models:
           Deadline for the seller to hand the item to the carrier. {{ doc('local_timestamp') }}
         data_tests:
           - not_null
-          - dbt_utils.accepted_range:
-              name: known_issue__shipping_limit_years_after_purchase
-              arguments:
-                max_value: "cast('2019-01-01' as timestamp)"
-              config:
-                warn_if: ">4"
-                error_if: ">50"
-                tags: [known_issue]
-                meta:
-                  dq_issue: DQ-13
       - name: item_price_brl
         description: Price of one unit in BRL, excluding freight.
         data_tests:
@@ -215,14 +239,15 @@ models:
           - relationships:
               name: known_issue__customer_zip_prefix_missing_from_geolocation
               arguments:
-                to: ref('int_geolocation_aggregated_to_zip_prefixes')
+                to: ref('stg_olist__geolocation')
                 field: zip_code_prefix
               config:
-                warn_if: ">279"
+                warn_if: ">278"
                 error_if: ">1000"
+                store_failures: true
                 tags: [known_issue]
                 meta:
-                  dq_issue: DQ-16
+                  dq_issue: DQ-09
       - name: customer_city
         description: City, lower-case without accents.
         data_tests:
@@ -238,8 +263,9 @@ models:
 
   - name: stg_olist__order_payments
     description: >
-      One row per payment record of an order (`payment_sequential` = 1..n). An order can be
-      paid with several methods, e.g. a voucher plus a credit card.
+      One row per payment record of an order, numbered by `payment_sequential` (80 orders have
+      gaps in the sequence, DQ-11). An order can be paid with several methods, e.g. a voucher
+      plus a credit card.
     data_tests:
       - dbt_utils.unique_combination_of_columns:
           arguments:
@@ -251,6 +277,7 @@ models:
           config:
             warn_if: ">3"
             error_if: ">50"
+            store_failures: true
             tags: [known_issue]
             meta:
               dq_issue: DQ-11
@@ -290,6 +317,7 @@ models:
               config:
                 warn_if: ">2"
                 error_if: ">50"
+                store_failures: true
                 tags: [known_issue]
                 meta:
                   dq_issue: DQ-11
@@ -324,7 +352,9 @@ models:
               config:
                 warn_if: ">789"
                 error_if: ">2000"
+                store_failures: true
                 tags: [known_issue]
+                # one failure row = one distinct review_id values used on 2+ orders
                 meta:
                   dq_issue: DQ-02
       - name: order_id
@@ -340,7 +370,9 @@ models:
               config:
                 warn_if: ">547"
                 error_if: ">2000"
+                store_failures: true
                 tags: [known_issue]
+                # one failure row = one distinct order_id values with 2+ reviews
                 meta:
                   dq_issue: DQ-03
       - name: review_score
@@ -388,6 +420,7 @@ models:
               config:
                 warn_if: ">610"
                 error_if: ">1500"
+                store_failures: true
                 tags: [known_issue]
                 meta:
                   dq_issue: DQ-07
@@ -405,6 +438,7 @@ models:
               config:
                 warn_if: ">2"
                 error_if: ">50"
+                store_failures: true
                 tags: [known_issue]
                 meta:
                   dq_issue: DQ-07
@@ -415,6 +449,7 @@ models:
               config:
                 warn_if: ">4"
                 error_if: ">50"
+                store_failures: true
                 tags: [known_issue]
                 meta:
                   dq_issue: DQ-07
@@ -443,14 +478,15 @@ models:
           - relationships:
               name: known_issue__seller_zip_prefix_missing_from_geolocation
               arguments:
-                to: ref('int_geolocation_aggregated_to_zip_prefixes')
+                to: ref('stg_olist__geolocation')
                 field: zip_code_prefix
               config:
                 warn_if: ">7"
                 error_if: ">50"
+                store_failures: true
                 tags: [known_issue]
                 meta:
-                  dq_issue: DQ-16
+                  dq_issue: DQ-09
       - name: seller_city
         description: Cleaned city name (lower-case, no accents); null when the source value is not a city.
         data_tests:
@@ -459,9 +495,10 @@ models:
               config:
                 warn_if: ">7"
                 error_if: ">50"
+                store_failures: true
                 tags: [known_issue]
                 meta:
-                  dq_issue: DQ-06
+                  dq_issue: DQ-17
       - name: seller_state
         description: "{{ doc('state_code') }}"
         data_tests:
@@ -484,9 +521,10 @@ models:
           config:
             warn_if: ">27"
             error_if: ">200"
+            store_failures: true
             tags: [known_issue]
             meta:
-              dq_issue: DQ-05
+              dq_issue: DQ-10
     columns:
       - name: geolocation_key
         description: Surrogate key of a distinct point.

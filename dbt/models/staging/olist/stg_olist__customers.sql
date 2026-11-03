@@ -15,7 +15,7 @@ renamed as (
 
         -- location (zip prefixes keep their leading zeros as text)
         lpad(trim(customer_zip_code_prefix), 5, '0') as customer_zip_code_prefix,
-        {{ clean_city_name('customer_city') }} as customer_city,
+        {{ clean_city_name('customer_city', 'customer_state') }} as customer_city,
         upper(trim(customer_state)) as customer_state,
 
         -- metadata

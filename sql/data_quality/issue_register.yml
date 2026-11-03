@@ -1,0 +1,331 @@
+# Data-quality issue register: every raw-data issue found while profiling the Olist extract.
+#
+# Single source of truth for docs/data_quality_report.md (table rendered by
+# scripts/render_docs_tables.py), the "Raw Data Issues" page of the app and reports/report.html.
+# `count_sql` must return one integer from the `raw` schema. It is re-run on every `make cache`,
+# so the published numbers always match the data.
+#
+# Fields: id, class, table, title, count_sql, unit, detail, handling, downstream, dbt_tests
+
+issues:
+  # ---------------------------------------------------------------- A. keys, identity, grain
+  - id: DQ-01
+    class: Keys, identity & grain
+    table: customers
+    title: customer_id is issued per order, not per person
+    count_sql: select count(*) from (select customer_unique_id from raw.customers group by 1 having count(*) > 1)
+    unit: people with 2+ customer_ids
+    detail: >
+      99,441 customer_ids map 1:1 to orders, but belong to 96,096 people (customer_unique_id).
+      Counting customers or repeat buyers on customer_id gives a 0% repeat rate.
+    handling: dim_customers and customer_360 are keyed on customer_unique_id; facts carry both keys.
+    downstream: Always count people with customer_unique_id. customer_id is for traceability only.
+    dbt_tests: [dim_customers_has_one_row_per_person, unique_dim_customers_customer_unique_id]
+
+  - id: DQ-02
+    class: Keys, identity & grain
+    table: order_reviews
+    title: review_id is not unique
+    count_sql: select count(*) from (select review_id from raw.order_reviews group by 1 having count(*) > 1)
+    unit: review_ids used on 2+ orders
+    detail: >
+      789 review_ids appear on 1,603 rows: one survey answer was recorded against several orders
+      of the same customer. (review_id, order_id) is unique.
+    handling: Staging grain is (review_id, order_id) with a surrogate key; reviews are attached per order.
+    downstream: Review metrics are order-level ("share of orders with a bad review"), never a count of review_ids.
+    dbt_tests: [known_issue__review_id_shared_across_orders]
+
+  - id: DQ-03
+    class: Keys, identity & grain
+    table: order_reviews
+    title: Some orders were reviewed 2-3 times
+    count_sql: select count(*) from (select order_id from raw.order_reviews group by 1 having count(*) > 1)
+    unit: orders with 2+ reviews
+    detail: >
+      547 orders have 2-3 survey answers; 202 of them disagree on the score. Joining reviews to
+      orders directly fans out order counts and GMV.
+    handling: int_reviews_deduplicated_to_orders keeps the most recently answered review and stores review_count.
+    downstream: Use fct_orders.review_score (latest answer). review_count > 1 marks the affected orders.
+    dbt_tests: [known_issue__orders_with_multiple_reviews, unique_int_reviews_deduplicated_to_orders_order_id]
+
+  - id: DQ-04
+    class: Keys, identity & grain
+    table: order_items
+    title: No quantity column; one row per unit
+    count_sql: select count(*) from (select order_id from raw.order_items group by order_id, product_id having count(*) > 1)
+    unit: orders with the same product on 2+ rows
+    detail: >
+      Buying 3 units of a product creates 3 rows (order_item_id 1..3). 7,088 orders contain the
+      same product more than once.
+    handling: fct_order_items keeps one row per unit; quantity = count of rows.
+    downstream: Count units with count(*) on fct_order_items; count orders with count(distinct order_id).
+    dbt_tests: [dbt_utils_unique_combination_of_columns_fct_order_items_order_id__order_item_id]
+
+  - id: DQ-05
+    class: Keys, identity & grain
+    table: orders
+    title: One checkout can be split into several orders in the same second
+    count_sql: >
+      select count(*) from (select c.customer_unique_id, o.order_purchase_timestamp
+      from raw.orders o join raw.customers c using (customer_id) group by 1, 2 having count(*) > 1)
+    unit: same-second order groups
+    detail: >
+      290 times a person placed 2+ orders in the same second (582 orders), mostly one per seller.
+      Counted as orders, this inflates the repeat-purchase rate from 2.17% to 3.04%.
+    handling: Repeat status uses distinct purchase days (dim_customers.purchase_days >= 2).
+    downstream: Use is_repeat_customer. Do not compute repeat rate as "customers with 2+ orders".
+    dbt_tests: []
+
+  # ---------------------------------------------------------------- B. duplicates
+  - id: DQ-06
+    class: Duplicates
+    table: geolocation
+    title: Geolocation repeats the same point many times
+    count_sql: >
+      select count(*) - (select count(*) from (select distinct geolocation_zip_code_prefix, geolocation_lat,
+      geolocation_lng, geolocation_city, geolocation_state from raw.geolocation)) from raw.geolocation
+    unit: exact duplicate rows
+    detail: >
+      1,000,163 rows for 19,015 zip prefixes; 261,831 rows are exact duplicates. A naive join on
+      zip prefix multiplies every customer by ~50 rows.
+    handling: Staging de-duplicates; int_geolocation_aggregated_to_zip_prefixes keeps one median point per prefix.
+    downstream: Use the latitude / longitude on dim_customers and dim_sellers. Never join raw geolocation.
+    dbt_tests: [unique_stg_olist__geolocation_geolocation_key, unique_int_geolocation_aggregated_to_zip_prefixes_zip_code_prefix]
+
+  # ---------------------------------------------------------------- C. missing values & records
+  - id: DQ-07
+    class: Missing values & missing records
+    table: products
+    title: Products without category or attributes
+    count_sql: select count(*) from raw.products where product_category_name is null
+    unit: products without category
+    detail: >
+      610 products have no category, name/description length or photo count (1,603 items in
+      1,451 orders). 2 more have no weight or dimensions, and 4 have weight 0.
+    handling: dim_products.product_category = 'unknown'; has_complete_attributes flags the rest.
+    downstream: Category reports show an explicit 'unknown' bucket (~1.5% of items). Exclude it only on purpose.
+    dbt_tests: [known_issue__products_missing_category, known_issue__products_missing_weight, known_issue__products_with_zero_weight]
+
+  - id: DQ-08
+    class: Missing values & missing records
+    table: orders
+    title: Orders without items, payment or review
+    count_sql: select count(*) from raw.orders where order_id not in (select order_id from raw.order_items)
+    unit: orders without items
+    detail: >
+      775 orders have no items: 603 unavailable, 164 canceled and 8 in a net-order status (5 created,
+      2 invoiced, 1 shipped). 1 delivered order has no payment, and 768 orders have no review.
+    handling: Children are left-joined after aggregation; amounts are 0 and has_items / has_payment / has_review flag the gaps.
+    downstream: Net order count includes the 8 net orders without items (GMV 0). Review rates use reviewed orders as the denominator.
+    dbt_tests: [assert_net_orders_have_items, known_issue__net_orders_without_payment]
+
+  - id: DQ-09
+    class: Missing values & missing records
+    table: geolocation
+    title: Customer and seller zip prefixes missing from geolocation
+    count_sql: >
+      select (select count(*) from raw.customers where customer_zip_code_prefix not in (select geolocation_zip_code_prefix from raw.geolocation))
+      + (select count(*) from raw.sellers where seller_zip_code_prefix not in (select geolocation_zip_code_prefix from raw.geolocation))
+    unit: customers + sellers without coordinates
+    detail: >
+      278 customer records (157 zip prefixes) and 7 sellers have a zip prefix that is not in the
+      geolocation file. One more prefix has only points outside Brazil.
+    handling: Coordinates are left null; state and region come from the customer / seller record and are always present.
+    downstream: Maps drop ~0.3% of customers. Use state / region for geographic aggregates.
+    dbt_tests: [known_issue__customer_zip_prefix_missing_from_geolocation, known_issue__seller_zip_prefix_missing_from_geolocation]
+
+  # ---------------------------------------------------------------- D. invalid / out of range
+  - id: DQ-10
+    class: Invalid or out-of-range values
+    table: geolocation
+    title: Coordinates outside Brazil
+    count_sql: >
+      select count(*) from raw.geolocation where not (geolocation_lat::double between -34.0 and 5.5
+      and geolocation_lng::double between -74.5 and -28.5)
+    unit: rows outside the Brazil bounding box
+    detail: Points in Europe, North America or at (0, 0); latitude up to 45 and longitude up to +9.
+    handling: Excluded before the per-prefix median (is_within_brazil).
+    downstream: None; already removed from dim coordinates.
+    dbt_tests: [known_issue__geolocation_points_outside_brazil]
+
+  - id: DQ-11
+    class: Invalid or out-of-range values
+    table: order_payments
+    title: Undefined payment type and zero installments
+    count_sql: select count(*) from raw.order_payments where payment_type = 'not_defined' or payment_installments::int = 0
+    unit: payment rows
+    detail: >
+      3 rows have payment_type 'not_defined' with value 0, and 2 credit-card rows have 0
+      installments. Also 6 zero-value voucher rows and 80 orders with gaps in payment_sequential.
+    handling: Kept as recorded (they do not change totals); baseline tests alert if they grow.
+    downstream: Filter payment_type = 'not_defined' out of payment-mix charts.
+    dbt_tests: [known_issue__payment_type_not_defined, known_issue__payment_with_zero_installments]
+
+  - id: DQ-12
+    class: Invalid or out-of-range values
+    table: order_items
+    title: Shipping deadlines months or years after purchase
+    count_sql: >
+      select count(*) from raw.order_items i join raw.orders o using (order_id)
+      where i.shipping_limit_date::timestamp > o.order_purchase_timestamp::timestamp + interval 90 day
+    unit: item rows with a deadline > 90 days after purchase
+    detail: >
+      The seller's shipping deadline is normally a few days after purchase. 8 items (7 orders) have
+      one more than 90 days later; 4 of them are about three years later (in 2020).
+    handling: Kept; they can only make those items look "on time" in the seller handover SLA.
+    downstream: Negligible effect on seller_scorecard.late_handover_rate.
+    dbt_tests: [assert_shipping_limit_within_90_days_of_purchase]
+
+  - id: DQ-13
+    class: Invalid or out-of-range values
+    table: orders
+    title: Extreme delivery durations
+    count_sql: >
+      select count(*) from raw.orders where order_status = 'delivered'
+      and date_diff('day', order_purchase_timestamp::date, order_delivered_customer_date::date) > 120
+    unit: delivered orders taking > 120 days
+    detail: 43 delivered orders took more than 120 days (maximum 210). Plausible but extreme.
+    handling: Kept; they are real outcomes.
+    downstream: Report medians next to averages for delivery time.
+    dbt_tests: [known_issue__deliveries_over_120_days]
+
+  # ---------------------------------------------------------------- E. contradictory timestamps
+  - id: DQ-14
+    class: Contradictory timestamps
+    table: orders
+    title: Order lifecycle timestamps out of order
+    count_sql: >
+      select count(*) from raw.orders where
+      order_delivered_carrier_date::timestamp < order_approved_at::timestamp
+      or order_delivered_carrier_date::timestamp < order_purchase_timestamp::timestamp
+      or order_delivered_customer_date::timestamp < order_delivered_carrier_date::timestamp
+      or order_delivered_customer_date::timestamp < order_approved_at::timestamp
+      or (order_status = 'delivered' and (order_delivered_customer_date is null or order_approved_at is null))
+      or (order_status = 'canceled' and order_delivered_customer_date is not null)
+    unit: orders with 1+ contradiction
+    detail: >
+      1,359 orders reached the carrier before payment approval (166 before purchase), 23 were
+      delivered before carrier pickup, 61 before approval, 14 delivered orders have no approval
+      time, 8 have no delivery time, and 6 canceled orders have a delivery time.
+    handling: >
+      Flagged in fct_orders.data_quality_flags, never dropped. Delivery metrics exist only for
+      delivered orders with a delivery timestamp.
+    downstream: Delivery KPIs use orders with is_late_delivery not null. Filter data_quality_flags to study the anomalies.
+    dbt_tests: [known_issue__carrier_pickup_before_approval, known_issue__carrier_pickup_before_purchase, known_issue__delivered_before_carrier_pickup, known_issue__delivered_before_approval, known_issue__delivered_orders_missing_approval, known_issue__delivered_orders_missing_delivery_timestamp, known_issue__canceled_orders_with_delivery_timestamp]
+
+  - id: DQ-15
+    class: Contradictory timestamps
+    table: order_reviews
+    title: Satisfaction surveys dated before the purchase
+    count_sql: >
+      select count(*) from raw.order_reviews r join raw.orders o using (order_id)
+      where r.review_creation_date::date < o.order_purchase_timestamp::date
+    unit: review rows
+    detail: 64 surveys were "sent" before the order was placed.
+    handling: Kept (the score is still the customer's answer); monitored.
+    downstream: Do not use the survey date to measure review latency for these orders.
+    dbt_tests: [assert_reviews_not_sent_before_purchase]
+
+  # ---------------------------------------------------------------- F. reconciliation
+  - id: DQ-16
+    class: Cross-table reconciliation
+    table: order_payments
+    title: Payments do not equal items + freight
+    count_sql: >
+      select count(*) from (select i.order_id, sum(i.price::double + i.freight_value::double) v from raw.order_items i group by 1) i
+      join (select order_id, sum(payment_value::double) p from raw.order_payments group by 1) p using (order_id)
+      where abs(p - v) > 1
+    unit: orders off by more than R$1
+    detail: >
+      303 orders differ by more than 1 cent and 249 by more than R$1. 229 of the 232 orders
+      overpaid by more than R$1 are card payments in installments: the amount includes interest.
+      Net effect: payments exceed items + freight by R$2,870 (0.02%).
+    handling: >
+      GMV (items + freight) is the revenue measure; payments are kept separately
+      (payment_total_brl, payment_gmv_difference_brl, is_payment_mismatch). See ADR 0004.
+    downstream: Use order_gmv_brl for sales and AOV. Use payment_total_brl only for cash or payment-mix questions.
+    dbt_tests: [assert_payments_reconcile_with_order_gmv, fct_orders_payments_reconcile_with_staging]
+
+  # ---------------------------------------------------------------- G. text, encoding, format
+  - id: DQ-17
+    class: Text, encoding & format
+    table: sellers
+    title: Free-text city names
+    count_sql: >
+      select count(*) from raw.sellers where regexp_matches(seller_city, '[/\\,@0-9]|\s-\s|-[a-z]{2}$|\s{2}')
+      or length(trim(seller_city)) <= 2 or seller_city <> lower(strip_accents(seller_city))
+    unit: seller city values needing cleaning
+    detail: >
+      Sellers typed the state into the city ("sao paulo - sp", "pinhais/pr"), a zip code, an e-mail
+      address or just "sp". The geolocation file has 2,044 redundant spellings of city names
+      (accents, double spaces, mojibake such as "sa£o paulo").
+    handling: >
+      Macro clean_city_name (lower-case, strip accents and suffixes, null when unusable); the 7
+      unusable seller cities are inferred from the zip prefix (dim_sellers.is_city_inferred_from_zip).
+    downstream: City-level reports are reliable for customers; for sellers, prefer state.
+    dbt_tests: [known_issue__seller_city_unusable, test_seller_city_cleaning]
+
+  - id: DQ-18
+    class: Text, encoding & format
+    table: (files)
+    title: File-format traps
+    count_sql: >
+      select count(*) from raw.order_reviews
+      where regexp_matches(coalesce(review_comment_message, '') || coalesce(review_comment_title, ''), '[\r\n]')
+    unit: review rows with line breaks in the text
+    detail: >
+      The reviews file has 104,719 physical lines for 99,224 rows (3,852 comments contain line
+      breaks), so wc -l and line-based tools miscount. The translation file starts with a UTF-8
+      BOM and has no trailing newline. 23,995 customer zip prefixes start with 0 and lose it if
+      read as numbers. Two product columns are misspelled (*_lenght).
+    handling: >
+      CSV parsing with a real parser, every raw column as VARCHAR, a load audit of physical vs
+      parsed rows, and renamed columns in staging.
+    downstream: None; handled at load and staging.
+    dbt_tests: [row_count_matches_load_audit (9 sources), customer_zip_prefix_is_five_digits]
+
+  # ---------------------------------------------------------------- H. coverage
+  - id: DQ-19
+    class: Coverage & reference data
+    table: orders
+    title: Incomplete months at both ends of the extract
+    count_sql: >
+      with m as (select unnest(generate_series(date '2016-09-01', date '2018-10-01', interval 1 month))::date mon),
+      o as (select date_trunc('month', order_purchase_timestamp::timestamp)::date mon, count(*) n from raw.orders group by 1)
+      select count(*) from m left join o using (mon) where coalesce(n, 0) < 100
+    unit: months with < 100 orders
+    detail: >
+      2016-09 has 4 orders, 2016-11 none and 2016-12 one; 2018-09 and 2018-10 have 20 between
+      them, nearly all canceled. Complete months run from 2017-01 to 2018-08.
+    handling: dim_date.is_complete_data_month; a test fails if a complete month ever has < 500 net orders.
+    downstream: Trend charts and month-over-month comparisons use complete months only.
+    dbt_tests: [assert_complete_months_have_expected_volume]
+
+  - id: DQ-20
+    class: Coverage & reference data
+    table: product_category_name_translation
+    title: Categories missing from the translation table
+    count_sql: >
+      select count(distinct product_category_name) from raw.products where product_category_name is not null
+      and product_category_name not in (select product_category_name from raw.product_category_name_translation)
+    unit: untranslated categories
+    detail: pc_gamer and portateis_cozinha_e_preparadores_de_alimentos (13 products) have no English name.
+    handling: Seed product_category_translation_overrides; a test fails on any new untranslated category.
+    downstream: None.
+    dbt_tests: [assert_all_product_categories_translated]
+
+  # ---------------------------------------------------------------- I. semantics
+  - id: DQ-21
+    class: Undocumented semantics
+    table: (all)
+    title: Timestamps without time zone; misleading column names
+    count_sql: select 9
+    unit: timestamp / date columns affected
+    detail: >
+      No time zone is recorded; values look like local Sao Paulo time. "review_creation_date" is
+      the day the survey was sent, and "order_delivered_carrier_date" is the carrier pickup time.
+    handling: >
+      Documented assumption (America/Sao_Paulo); fct_orders adds order_purchased_at_utc. Columns
+      renamed in staging (review_survey_sent_date, order_delivered_to_carrier_at).
+    downstream: Daily metrics use the local purchase date. Use the _utc column only to join UTC systems.
+    dbt_tests: []

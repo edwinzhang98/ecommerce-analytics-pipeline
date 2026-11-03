@@ -55,7 +55,7 @@ models:
 
   - name: int_orders_classified
     description: >
-      Order status and lifecycle logic: status group and valid-order flag (from the
+      Order status and lifecycle logic: status group and net-order flag (from the
       `order_status_mapping` seed), delivery durations, the late-delivery flag, and
       `lifecycle_anomalies`, a comma-separated list of contradictions between the source
       timestamps.
@@ -73,8 +73,8 @@ models:
         description: "{{ doc('order_status_group') }}"
         data_tests:
           - not_null
-      - name: is_valid_order
-        description: "{{ doc('is_valid_order') }}"
+      - name: is_net_order
+        description: "{{ doc('is_net_order') }}"
         data_tests:
           - not_null
       - name: is_late_delivery
@@ -148,7 +148,7 @@ unit_tests:
     description: >
       Late = delivered on a later calendar day than the estimate (same day is on time);
       delivery metrics only exist for delivered orders with a timestamp; canceled orders are
-      not valid orders; contradictory timestamps are flagged.
+      not net orders; contradictory timestamps are flagged.
     model: int_orders_classified
     given:
       - input: ref('stg_olist__orders')
@@ -159,15 +159,15 @@ unit_tests:
           - {order_id: pickup_first, customer_id: c4, order_status: shipped, order_purchased_at: "2018-01-01 10:00:00", order_approved_at: "2018-01-03 10:00:00", order_delivered_to_carrier_at: "2018-01-02 10:00:00", order_delivered_to_customer_at: null, order_estimated_delivery_date: "2018-01-20"}
       - input: ref('order_status_mapping')
         rows:
-          - {order_status: delivered, order_status_group: delivered, is_valid_order: true}
-          - {order_status: shipped, order_status_group: shipped, is_valid_order: true}
-          - {order_status: canceled, order_status_group: canceled, is_valid_order: false}
+          - {order_status: delivered, order_status_group: delivered, is_net_order: true}
+          - {order_status: shipped, order_status_group: shipped, is_net_order: true}
+          - {order_status: canceled, order_status_group: canceled, is_net_order: false}
     expect:
       rows:
-        - {order_id: on_time, is_valid_order: true, delivery_days: 9, delivery_delay_days: 0, is_late_delivery: false, lifecycle_anomalies: null}
-        - {order_id: late, is_valid_order: true, delivery_days: 10, delivery_delay_days: 1, is_late_delivery: true, lifecycle_anomalies: null}
-        - {order_id: canceled, is_valid_order: false, delivery_days: null, delivery_delay_days: null, is_late_delivery: null, lifecycle_anomalies: canceled_with_delivery}
-        - {order_id: pickup_first, is_valid_order: true, delivery_days: null, delivery_delay_days: null, is_late_delivery: null, lifecycle_anomalies: carrier_before_approval}
+        - {order_id: on_time, is_net_order: true, delivery_days: 9, delivery_delay_days: 0, is_late_delivery: false, lifecycle_anomalies: null}
+        - {order_id: late, is_net_order: true, delivery_days: 10, delivery_delay_days: 1, is_late_delivery: true, lifecycle_anomalies: null}
+        - {order_id: canceled, is_net_order: false, delivery_days: null, delivery_delay_days: null, is_late_delivery: null, lifecycle_anomalies: canceled_with_delivery}
+        - {order_id: pickup_first, is_net_order: true, delivery_days: null, delivery_delay_days: null, is_late_delivery: null, lifecycle_anomalies: carrier_before_approval}
 
   - name: test_review_dedup_keeps_latest_answer
     description: An order reviewed twice keeps the most recently answered review and counts both.

@@ -1,8 +1,15 @@
 {#
     The original complaint, as a test: "three analysts got three different order counts".
-    Five different, documented ways of counting net orders from the marts must agree.
-    If any join in the star schema fanned out, or a mart dropped or duplicated orders,
-    the paths would disagree and this test would return every path with its count.
+    Independent ways of counting net orders must agree:
+      1. fct_orders filtered on is_net_order (the documented way)
+      2. the star join fct_orders x dim_customers x dim_date (proves the dimensions cannot fan out)
+      3. monthly counts through dim_date, summed (proves no order falls outside the calendar)
+      4. dim_customers.frequency_orders summed (built through the person-level aggregation)
+      5. the item fact: distinct net orders in fct_order_items plus net orders that have no items
+         (proves the item-level status flag agrees with the order level)
+      6. straight from staging and the status seed, bypassing every intermediate and mart model
+    If any join fanned out, or a model dropped or duplicated orders, the paths would disagree
+    and the test returns every path with its count.
 #}
 
 {{ config(tags=['reconciliation']) }}
@@ -17,41 +24,50 @@ fct_orders as (
 
 paths as (
 
-    select 'fct_orders where is_valid_order' as query_path, count(*) as net_orders
+    select '1. fct_orders where is_net_order' as query_path, count(*) as net_orders
     from fct_orders
-    where is_valid_order
+    where is_net_order
 
     union all
 
-    select 'star join fct_orders x dim_customers x dim_date', count(*)
+    select '2. star join fct_orders x dim_customers x dim_date', count(*)
     from fct_orders
     inner join {{ ref('dim_customers') }} as dim_customers
         on fct_orders.customer_unique_id = dim_customers.customer_unique_id
     inner join {{ ref('dim_date') }} as dim_date
         on fct_orders.order_purchase_date = dim_date.date_day
-    where fct_orders.is_valid_order
+    where fct_orders.is_net_order
 
     union all
 
-    select 'sum of dim_customers.frequency_orders', sum(frequency_orders)
-    from {{ ref('dim_customers') }}
-
-    union all
-
-    select 'sum of customer_360.frequency_orders', sum(frequency_orders)
-    from {{ ref('customer_360') }}
-
-    union all
-
-    select 'sum of monthly net orders via dim_date', sum(monthly_net_orders)
+    select '3. monthly net orders via dim_date, summed', sum(monthly_net_orders)
     from (
         select dim_date.year_month, count(*) as monthly_net_orders
         from fct_orders
         inner join {{ ref('dim_date') }} as dim_date
             on fct_orders.order_purchase_date = dim_date.date_day
-        where fct_orders.is_valid_order
+        where fct_orders.is_net_order
         group by dim_date.year_month
     )
+
+    union all
+
+    select '4. sum of dim_customers.frequency_orders', sum(frequency_orders)
+    from {{ ref('dim_customers') }}
+
+    union all
+
+    select '5. distinct net orders in fct_order_items + net orders without items',
+        (select count(distinct order_id) from {{ ref('fct_order_items') }} where is_net_order)
+        + (select count(*) from fct_orders where is_net_order and not has_items)
+
+    union all
+
+    select '6. stg_olist__orders x order_status_mapping seed', count(*)
+    from {{ ref('stg_olist__orders') }} as orders
+    inner join {{ ref('order_status_mapping') }} as status_mapping
+        on orders.order_status = status_mapping.order_status
+    where status_mapping.is_net_order
 
 )
 

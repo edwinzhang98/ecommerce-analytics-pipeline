@@ -1,7 +1,7 @@
 {#
     customer_360 — one wide row per person (customer_unique_id) for CRM and analysts.
     Inherits every dim_customers column, then adds behaviour from the facts.
-    All behavioural metrics use valid orders only (canceled / unavailable excluded),
+    All behavioural metrics use net orders only (canceled / unavailable excluded),
     except canceled_or_unavailable_orders.
 #}
 
@@ -19,10 +19,10 @@ orders as (
 
 ),
 
-valid_orders as (
+net_orders as (
 
     select * from orders
-    where is_valid_order
+    where is_net_order
 
 ),
 
@@ -36,8 +36,8 @@ items as (
         dim_products.product_category
 
     from {{ ref('fct_order_items') }} as fct_order_items
-    inner join valid_orders
-        on fct_order_items.order_id = valid_orders.order_id
+    inner join net_orders
+        on fct_order_items.order_id = net_orders.order_id
     left join {{ ref('dim_products') }} as dim_products
         on fct_order_items.product_id = dim_products.product_id
 
@@ -59,7 +59,7 @@ order_outcomes as (
         bool_or(has_voucher_payment) as has_used_voucher,
         max(max_payment_installments) as max_payment_installments
 
-    from valid_orders
+    from net_orders
     group by customer_unique_id
 
 ),
@@ -71,7 +71,7 @@ canceled as (
         count(*) as canceled_or_unavailable_orders
 
     from orders
-    where not is_valid_order
+    where not is_net_order
     group by customer_unique_id
 
 ),
@@ -86,7 +86,7 @@ payment_preference as (
             order by count(*) desc, primary_payment_type
         ) as preference_rank
 
-    from valid_orders
+    from net_orders
     where primary_payment_type is not null
     group by customer_unique_id, primary_payment_type
 
@@ -102,7 +102,7 @@ purchase_days as (
             order by order_purchase_date
         ) as purchase_day_number
 
-    from (select distinct customer_unique_id, order_purchase_date from valid_orders)
+    from (select distinct customer_unique_id, order_purchase_date from net_orders)
 
 ),
 
@@ -154,12 +154,12 @@ final as (
         -- lifecycle
         cast(
             case
-                when not customers.has_valid_order then 'no_valid_order'
+                when not customers.has_net_order then 'no_net_order'
                 when customers.is_repeat_customer then 'repeat'
                 else 'one_time'
             end as varchar
         ) as customer_lifecycle_stage,
-        cast(date_trunc('month', customers.first_valid_order_at) as date) as first_valid_order_month,
+        cast(date_trunc('month', customers.first_net_order_at) as date) as first_net_order_month,
         cast(date_diff('day', second_purchase.first_purchase_date, second_purchase.second_purchase_date) as integer)
             as days_to_second_purchase,
         cast(coalesce(canceled.canceled_or_unavailable_orders, 0) as integer) as canceled_or_unavailable_orders,

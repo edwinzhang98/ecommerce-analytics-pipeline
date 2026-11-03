@@ -5,6 +5,8 @@
     labels into reports.
 #}
 
+{{ config(tags=['reference_data'], meta={'dq_issue': 'DQ-20'}) }}
+
 with
 
 translations as (

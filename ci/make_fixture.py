@@ -5,10 +5,11 @@ Kaggle credentials), so CI runs the full pipeline on this fixture instead. It ha
   * the same 9 files, columns, quoting style and text types as the Kaggle release
   * ~2,900 orders spread over 2016-09..2018-10 with realistic status mix, timings, multi-item
     and multi-payment orders, repeat customers and split checkouts
-  * a few planted versions of the documented raw-data issues (review_id shared across orders,
-    multiple reviews per order, untranslated category, null categories, dirty seller cities,
-    duplicate and out-of-Brazil geolocation points, a UTF-8 BOM, payment / GMV mismatches,
-    lifecycle contradictions), so the cleaning logic and the known-issue tests are exercised.
+  * at least one planted instance of every documented raw-data issue that has a known-issue
+    test (shared review_ids, multiple reviews, untranslated / missing categories, dirty seller
+    cities, duplicate and out-of-Brazil geolocation points, a UTF-8 BOM, payment / GMV mismatches,
+    lifecycle contradictions, ...), so CI proves that every known-issue test actually detects
+    its issue (ci/check_known_issues_detected.py), not just that it passes.
 Everything is generated from a fixed seed, so CI is deterministic. No real record is reused.
 
 Usage:
@@ -73,6 +74,53 @@ def monthly_plan() -> list[tuple[date, int]]:
         month = date(month.year + (month.month == 12), month.month % 12 + 1, 1)
     plan += [(date(2018, 9, 1), 5), (date(2018, 10, 1), 2)]
     return plan
+
+
+def parse_ts(value: str) -> datetime:
+    return datetime.strptime(value, "%Y-%m-%d %H:%M:%S")
+
+
+def plant_known_issues(orders: list, items: list, payments: list, reviews: list, sellers: list) -> str:
+    """Plant at least one instance of every documented raw-data issue that has a known-issue test,
+    without breaking the hard rules (e.g. nothing is delivered before it was purchased).
+    CI then checks that every known-issue test detects its planted rows (ci/check_known_issues_detected.py).
+    Returns the zip prefix of a seller that must be missing from geolocation."""
+    full = [i for i, o in enumerate(orders) if i >= 500 and o[2] == "delivered" and all(o[3:8])]
+    pick = iter(full)
+    items_by_order: dict[str, list[int]] = {}
+    for idx, row in enumerate(items):
+        items_by_order.setdefault(row[0], []).append(idx)
+
+    def next_with_items() -> int:
+        while True:
+            i = next(pick)
+            if orders[i][0] in items_by_order:
+                return i
+
+    i = next_with_items(); orders[i][4] = ""                                   # delivered, no approval time
+    i = next_with_items(); orders[i][5] = ts(parse_ts(orders[i][3]) - timedelta(hours=6))  # carrier pickup before purchase
+    i = next_with_items(); c = parse_ts(orders[i][5]); orders[i][6] = ts(c - timedelta(hours=2))  # delivered before pickup
+    i = next_with_items(); p0 = parse_ts(orders[i][3])                          # delivered before approval
+    orders[i][4], orders[i][5], orders[i][6] = ts(p0 + timedelta(days=3)), ts(p0 + timedelta(days=1)), ts(p0 + timedelta(days=2))
+    i = next_with_items(); orders[i][6] = ""                                   # delivered, no delivery time
+    i = next_with_items(); orders[i][6] = ts(parse_ts(orders[i][3]) + timedelta(days=130))  # delivery over 120 days
+    i = next_with_items()                                                      # net order without payment
+    payments[:] = [row for row in payments if row[0] != orders[i][0]]
+    i = next_with_items()                                                      # shipping limit years after purchase
+    items[items_by_order[orders[i][0]][0]][4] = ts(parse_ts(orders[i][3]) + timedelta(days=400))
+    i = next_with_items()                                                      # survey sent before purchase
+    for review in reviews:
+        if review[1] == orders[i][0]:
+            sent = parse_ts(orders[i][3]).date() - timedelta(days=3)
+            review[5], review[6] = f"{sent} 00:00:00", ts(datetime.combine(sent, datetime.min.time()) + timedelta(hours=20))
+            break
+    canceled = next(o for o in orders if o[2] == "canceled" and o[0] in items_by_order)  # canceled, has delivery time
+    canceled[6] = ts(parse_ts(canceled[3]) + timedelta(days=5))
+    invoiced = next(o for o in orders if o[2] == "invoiced" and o[0] in items_by_order)  # net order without items
+    items[:] = [row for row in items if row[0] != invoiced[0]]
+    card = next(row for row in payments if row[2] == "credit_card")                    # zero installments
+    card[3] = 0
+    return sellers[10][1]                                                      # a seller with a usable city
 
 
 def generate(out: Path) -> dict[str, int]:
@@ -199,11 +247,12 @@ def generate(out: Path) -> dict[str, int]:
         again[6] = ts(datetime.strptime(again[6], "%Y-%m-%d %H:%M:%S") + timedelta(days=3))
         reviews.append(again)
     payments.append([orders[7][0], 2, "not_defined", 1, "0.00"])  # planted not_defined payment row
+    planted_seller_zip = plant_known_issues(orders, items, payments, reviews, sellers)
 
     # ---- geolocation: several noisy points per zip, duplicates, accents, a few outliers ------
     geo = []
     all_zips = {z: s for z, s in customer_zips + seller_zips}
-    missing = set(list(all_zips)[:3])                   # a few zips with no geolocation at all
+    missing = set(list(all_zips)[:3]) | {planted_seller_zip}   # zips with no geolocation at all
     for zip_prefix, state in all_zips.items():
         if zip_prefix in missing:
             continue

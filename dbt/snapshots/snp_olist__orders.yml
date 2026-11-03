@@ -1,0 +1,28 @@
+snapshots:
+  - name: snp_olist__orders
+    relation: source('olist', 'orders')
+    description: >
+      Type-2 history (SCD2) of order status and lifecycle timestamps, taken from the raw source on
+      every `dbt build`. The source only holds the latest state; this snapshot keeps every version,
+      so "when did this order become delivered / canceled" can be answered once loads repeat.
+      `scripts/check_incremental.py` shows it capturing status changes between two extracts.
+    config:
+      schema: snapshots
+      unique_key: order_id
+      strategy: check
+      check_cols:
+        - order_status
+        - order_approved_at
+        - order_delivered_carrier_date
+        - order_delivered_customer_date
+        - order_estimated_delivery_date
+      hard_deletes: ignore
+    columns:
+      - name: order_id
+        description: "{{ doc('order_id') }}"
+        data_tests:
+          - not_null
+          - unique:
+              name: snapshot_has_one_current_version_per_order
+              config:
+                where: "dbt_valid_to is null"

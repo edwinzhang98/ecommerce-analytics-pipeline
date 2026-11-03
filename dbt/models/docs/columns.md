@@ -34,7 +34,7 @@ Lifecycle status from the source: `created`, `approved`, `invoiced`, `processing
 Status grouped for reporting (seed `order_status_mapping`): `awaiting_payment`, `processing`, `shipped`, `delivered`, `canceled`, `unavailable`.
 {% enddocs %}
 
-{% docs is_valid_order %}
+{% docs is_net_order %}
 True unless the status is `canceled` or `unavailable`. **Counting rows where this is true gives "net orders", the official order KPI** (ADR 0002). Driven by the `order_status_mapping` seed.
 {% enddocs %}
 

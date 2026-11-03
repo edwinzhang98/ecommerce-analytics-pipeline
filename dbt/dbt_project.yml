@@ -38,11 +38,23 @@ models:
     marts:
       +materialized: table
       +schema: marts
+      +access: public   # the published interface: contracts enforced, safe to build on
+  # Best-practice linter (naming, layering, coverage). Off in normal builds; CI enables it.
+  dbt_project_evaluator:
+    +enabled: "{{ var('run_project_evaluator', false) }}"
 
 seeds:
   olist_analytics:
     +schema: seeds
+    dbt_project_evaluator_exceptions:
+      +enabled: "{{ var('run_project_evaluator', false) }}"
+  dbt_project_evaluator:
+    +enabled: "{{ var('run_project_evaluator', false) }}"
+    dbt_project_evaluator_exceptions:
+      +enabled: false
 
 data_tests:
   olist_analytics:
     +schema: test_failures
+  dbt_project_evaluator:
+    +enabled: "{{ var('run_project_evaluator', false) }}"

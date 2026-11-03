@@ -1,11 +1,13 @@
 {#
     seller_scorecard — one wide row per seller with volume, GMV concentration, fulfilment and
-    review outcomes, for the seller-management team. Valid orders only.
+    review outcomes, for the seller-management team. Net orders only.
 
     Attribution: delivery and review outcomes are recorded per order. In the 1.3% of orders
     with more than one seller, the outcome is attributed to every seller in the order
     (see docs/analyst_guide.md). Handover SLA = the order reached the carrier after the
-    seller's shipping limit date.
+    seller's shipping limit date; it is measured on single-seller orders only, because the
+    source has one carrier timestamp per order and sellers in the same order can have
+    different shipping limits.
 #}
 
 with
@@ -19,7 +21,7 @@ sellers as (
 orders as (
 
     select * from {{ ref('fct_orders') }}
-    where is_valid_order
+    where is_net_order
 
 ),
 
@@ -52,6 +54,7 @@ seller_orders as (
         seller_items.order_id,
         min(seller_items.shipping_limit_at) as shipping_limit_at,
         max(orders.order_delivered_to_carrier_at) as delivered_to_carrier_at,
+        max(orders.distinct_seller_count) as distinct_seller_count,
         bool_or(orders.is_delivered) as is_delivered,
         bool_or(orders.is_late_delivery) as is_late_delivery,
         max(orders.delivery_days) as delivery_days,
@@ -89,15 +92,17 @@ outcomes as (
 
     select
         seller_id,
-        count(*) as valid_orders,
+        count(*) as net_orders,
         count(*) filter (where is_delivered) as delivered_orders,
         avg(case when is_late_delivery then 1.0 when not is_late_delivery then 0.0 end)
             as late_delivery_rate,
         avg(delivery_days) as avg_delivery_days,
-        count(*) filter (where delivered_to_carrier_at is not null) as handed_over_orders,
+        -- handover SLA on single-seller orders only (one carrier timestamp per order)
+        count(*) filter (where delivered_to_carrier_at is not null and distinct_seller_count = 1)
+            as handed_over_orders,
         avg(
             case
-                when delivered_to_carrier_at is null then null
+                when delivered_to_carrier_at is null or distinct_seller_count > 1 then null
                 when delivered_to_carrier_at > shipping_limit_at then 1.0
                 else 0.0
             end
@@ -136,7 +141,7 @@ joined as (
         volume.first_sale_date,
         volume.last_sale_date,
         coalesce(volume.active_months, 0) as active_months,
-        coalesce(outcomes.valid_orders, 0) as valid_orders,
+        coalesce(outcomes.net_orders, 0) as net_orders,
         coalesce(volume.items_sold, 0) as items_sold,
         coalesce(volume.distinct_products, 0) as distinct_products,
         category_preference.product_category as top_category,
@@ -174,7 +179,7 @@ final as (
         cast(first_sale_date as date) as first_sale_date,
         cast(last_sale_date as date) as last_sale_date,
         cast(active_months as integer) as active_months,
-        cast(valid_orders as integer) as valid_orders,
+        cast(net_orders as integer) as net_orders,
         cast(items_sold as integer) as items_sold,
         cast(distinct_products as integer) as distinct_products,
         cast(top_category as varchar) as top_category,

@@ -1,6 +1,6 @@
 {#
     Order status and lifecycle logic (ADR 0002):
-      * status -> status group and "valid order" flag, driven by the order_status_mapping seed
+      * status -> status group and "net order" flag, driven by the order_status_mapping seed
       * delivery durations and the late-delivery flag (delivered orders only)
       * lifecycle anomaly flags for timestamps that are out of order in the source
 #}
@@ -26,8 +26,10 @@ classified as (
         orders.customer_id,
         orders.order_status,
         status_mapping.order_status_group,
-        status_mapping.is_valid_order,
-        orders.order_status = 'delivered' as is_delivered,
+        status_mapping.is_net_order,
+        status_mapping.order_status_group = 'delivered' as is_delivered,
+        -- open orders (created .. shipped) can still change status; terminal ones cannot
+        status_mapping.is_terminal_status,
 
         orders.order_purchased_at,
         orders.order_approved_at,

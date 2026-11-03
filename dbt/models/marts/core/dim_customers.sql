@@ -2,7 +2,7 @@
     dim_customers — one row per person (customer_unique_id), including people whose only
     orders were canceled or unavailable. Carries RFM inputs (ADR 0003):
       R = recency_days, F = frequency_orders, M = monetary_gmv_brl
-    Recency is measured against the last valid purchase date in the data (rfm_reference_date),
+    Recency is measured against the last net-order purchase date in the data (rfm_reference_date),
     because the extract is historical: "today" would make every customer look lost.
 #}
 
@@ -28,9 +28,9 @@ states as (
 
 reference_date as (
 
-    select max(order_purchase_date) as rfm_reference_date
-    from {{ ref('int_orders_joined') }}
-    where is_valid_order
+    -- the last net-order purchase date in the data
+    select max(cast(last_net_order_at as date)) as rfm_reference_date
+    from persons
 
 ),
 
@@ -52,16 +52,16 @@ final as (
         -- order history
         cast(persons.orders_placed as integer) as orders_placed,
         cast(persons.first_order_at as timestamp) as first_order_at,
-        cast(persons.first_valid_order_at as timestamp) as first_valid_order_at,
-        cast(persons.last_valid_order_at as timestamp) as last_valid_order_at,
+        cast(persons.first_net_order_at as timestamp) as first_net_order_at,
+        cast(persons.last_net_order_at as timestamp) as last_net_order_at,
         cast(persons.purchase_days as integer) as purchase_days,
-        cast(persons.frequency_orders > 0 as boolean) as has_valid_order,
+        cast(persons.frequency_orders > 0 as boolean) as has_net_order,
         cast(persons.purchase_days >= 2 as boolean) as is_repeat_customer,
 
         -- RFM inputs
         cast(reference_date.rfm_reference_date as date) as rfm_reference_date,
         cast(
-            date_diff('day', cast(persons.last_valid_order_at as date), reference_date.rfm_reference_date)
+            date_diff('day', cast(persons.last_net_order_at as date), reference_date.rfm_reference_date)
             as integer
         ) as recency_days,
         cast(persons.frequency_orders as integer) as frequency_orders,

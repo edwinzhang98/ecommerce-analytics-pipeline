@@ -1,5 +1,5 @@
 {#
-    DQ-10 baseline: payments should equal items + freight. In the source, 249 orders differ by
+    DQ-16 baseline: payments should equal items + freight. In the source, 249 orders differ by
     more than the tolerance (default R$1.00), almost all card payments in installments where
     the amount includes interest (ADR 0004). Passes at the known baseline, warns if it grows,
     errors if it explodes. Failing rows are stored for inspection.
@@ -11,7 +11,7 @@
         error_if='>1000',
         store_failures=true,
         tags=['known_issue'],
-        meta={'dq_issue': 'DQ-10'}
+        meta={'dq_issue': 'DQ-16'}
     )
 }}
 

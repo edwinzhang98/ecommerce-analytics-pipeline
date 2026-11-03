@@ -1,0 +1,151 @@
+# Semantic layer (MetricFlow): the agreed metric definitions as code, so "net orders" or
+# "late delivery rate" are computed the same way by every tool that asks for them.
+# Query locally with:  uv run --with dbt-metricflow mf query --metrics net_orders --group-by metric_time__month
+# (see `make metrics`). Definitions mirror docs/02_metric_definitions.md.
+
+semantic_models:
+  - name: orders
+    description: Order grain (one row per order, any status), from fct_orders.
+    model: ref('fct_orders')
+    defaults:
+      agg_time_dimension: order_purchase_date
+    entities:
+      - name: order
+        type: primary
+        expr: order_id
+      - name: customer
+        type: foreign
+        expr: customer_unique_id
+    dimensions:
+      - name: order_purchase_date
+        description: Local purchase date, the date basis of every order metric.
+        type: time
+        type_params:
+          time_granularity: day
+      - name: order_status
+        type: categorical
+      - name: order_status_group
+        type: categorical
+      - name: delivery_state
+        type: categorical
+      - name: delivery_region
+        type: categorical
+      - name: primary_payment_type
+        type: categorical
+      - name: is_net_order
+        type: categorical
+    measures:
+      - name: placed_orders
+        description: Every order, any status.
+        agg: count
+        expr: order_id
+      - name: net_orders
+        description: Orders excluding canceled and unavailable (official KPI).
+        agg: sum
+        expr: case when is_net_order then 1 else 0 end
+      - name: delivered_orders
+        description: Orders with status delivered.
+        agg: sum
+        expr: case when is_delivered then 1 else 0 end
+      - name: net_gmv_brl
+        description: Items + freight of net orders, BRL.
+        agg: sum
+        expr: case when is_net_order then order_gmv_brl else 0 end
+      - name: late_deliveries
+        description: Delivered orders that arrived after the estimated date.
+        agg: sum
+        expr: case when is_late_delivery then 1 else 0 end
+      - name: measured_deliveries
+        description: Delivered orders with a delivery date (denominator of the late rate).
+        agg: sum
+        expr: case when is_late_delivery is not null then 1 else 0 end
+      - name: bad_reviews
+        description: Orders whose latest review is 1-2 stars.
+        agg: sum
+        expr: case when is_bad_review then 1 else 0 end
+      - name: reviewed_orders
+        description: Orders with a review.
+        agg: sum
+        expr: case when has_review then 1 else 0 end
+
+  - name: customers
+    description: Person grain, from dim_customers.
+    model: ref('dim_customers')
+    entities:
+      - name: customer
+        type: primary
+        expr: customer_unique_id
+    dimensions:
+      - name: customer_state
+        type: categorical
+      - name: customer_region
+        type: categorical
+      - name: is_repeat_customer
+        type: categorical
+
+metrics:
+  - name: placed_orders
+    label: Placed orders
+    description: Every order placed, any status.
+    type: simple
+    type_params:
+      measure: placed_orders
+  - name: net_orders
+    label: Net orders (official order KPI)
+    description: Orders placed minus canceled and unavailable (ADR 0002).
+    type: simple
+    type_params:
+      measure: net_orders
+  - name: delivered_orders
+    label: Delivered orders
+    description: Orders with status delivered.
+    type: simple
+    type_params:
+      measure: delivered_orders
+  - name: net_gmv_brl
+    label: Net GMV (BRL)
+    description: Items + freight of net orders.
+    type: simple
+    type_params:
+      measure: net_gmv_brl
+  - name: average_order_value_brl
+    label: Average order value (BRL)
+    description: Net GMV / net orders.
+    type: ratio
+    type_params:
+      numerator: net_gmv_brl
+      denominator: net_orders
+  - name: late_delivery_rate
+    label: Late delivery rate
+    description: Share of delivered orders (with a delivery date) that arrived after the estimate.
+    type: ratio
+    type_params:
+      numerator: late_deliveries
+      denominator: measured_deliveries
+  - name: late_deliveries
+    label: Late deliveries
+    type: simple
+    type_params:
+      measure: late_deliveries
+  - name: measured_deliveries
+    label: Measured deliveries
+    type: simple
+    type_params:
+      measure: measured_deliveries
+  - name: bad_review_rate
+    label: Bad review rate
+    description: Share of reviewed orders whose latest review is 1-2 stars.
+    type: ratio
+    type_params:
+      numerator: bad_reviews
+      denominator: reviewed_orders
+  - name: bad_reviews
+    label: Bad reviews
+    type: simple
+    type_params:
+      measure: bad_reviews
+  - name: reviewed_orders
+    label: Reviewed orders
+    type: simple
+    type_params:
+      measure: reviewed_orders
