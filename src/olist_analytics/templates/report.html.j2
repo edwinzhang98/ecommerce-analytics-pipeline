@@ -1,0 +1,258 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>E-commerce analytics pipeline: report</title>
+<style>
+  :root { --ink:#0b0b0b; --ink2:#52514e; --muted:#898781; --line:#e1e0d9; --surface:#fcfcfb; --page:#f9f9f7; --accent:#2a78d6; }
+  * { box-sizing: border-box; }
+  body { margin:0; background:var(--page); color:var(--ink); font:16px/1.6 system-ui,-apple-system,"Segoe UI",Roboto,sans-serif; }
+  main { max-width: 1080px; margin: 0 auto; padding: 32px 16px 80px; }
+  header.top { border-bottom:1px solid var(--line); padding-bottom:16px; margin-bottom:24px; }
+  h1 { font-size: 2rem; margin: 0 0 6px; }
+  h2 { font-size: 1.45rem; margin: 48px 0 8px; padding-top: 8px; border-top: 1px solid var(--line); }
+  h3 { font-size: 1.12rem; margin: 28px 0 6px; }
+  p, li { color: var(--ink); }
+  .lede { color: var(--ink2); font-size: 1.08rem; }
+  .meta { color: var(--muted); font-size: .88rem; }
+  .question { border-left: 3px solid var(--accent); padding: 2px 0 2px 12px; color: var(--ink2); margin: 8px 0 16px; }
+  .tldr { background: var(--surface); border: 1px solid var(--line); border-radius: 8px; padding: 14px 20px; }
+  .tldr li { margin: 4px 0; }
+  .kpis { display:grid; grid-template-columns: repeat(auto-fit, minmax(150px,1fr)); gap: 12px; margin: 16px 0; }
+  .kpi { background: var(--surface); border: 1px solid var(--line); border-radius: 8px; padding: 10px 14px; }
+  .kpi .label { color: var(--ink2); font-size: .85rem; }
+  .kpi .value { font-size: 1.6rem; font-weight: 600; }
+  .fig { background: var(--surface); border: 1px solid var(--line); border-radius: 8px; padding: 8px; margin: 14px 0; }
+  .grid2 { display:grid; grid-template-columns: 1fr 1fr; gap: 14px; }
+  @media (max-width: 860px) { .grid2 { grid-template-columns: 1fr; } }
+  table.data { border-collapse: collapse; width: 100%; font-size: .86rem; margin: 10px 0 16px; background: var(--surface); }
+  table.data th, table.data td { border-bottom: 1px solid var(--line); padding: 5px 8px; text-align: left; vertical-align: top; }
+  table.data th { color: var(--ink2); font-weight: 600; }
+  table.data td { font-variant-numeric: tabular-nums; }
+  .scroll { overflow-x: auto; }
+  code { background: #f0efec; padding: 1px 5px; border-radius: 4px; font-size: .88em; }
+  nav.toc { columns: 2; font-size: .92rem; }
+  nav.toc a { color: var(--accent); text-decoration: none; }
+  .note { color: var(--ink2); font-size: .92rem; }
+  img.shot { width: 100%; border: 1px solid var(--line); border-radius: 8px; }
+  .svgwrap { background: var(--surface); border: 1px solid var(--line); border-radius: 8px; padding: 12px; }
+</style>
+<script>{{ plotly_js | safe }}</script>
+</head>
+<body>
+<main>
+<header class="top">
+  <h1>E-commerce analytics pipeline</h1>
+  <div class="lede">From nine raw Olist files to tested, documented marts that give one answer to “how many orders?”, and the analysis those marts make possible.</div>
+  <div class="meta">Generated {{ generated }} from commit {{ commit }} · data: Olist Brazilian e-commerce (Kaggle), orders 2016-09 to 2018-10 · dbt Core {{ stats.dbt_version }} on DuckDB · repo: github.com/edwinzhang98/ecommerce-analytics-pipeline</div>
+</header>
+
+<section class="tldr">
+  <strong>TL;DR</strong>
+  <ul>
+    <li><b>The problem was real and explainable.</b> On the raw tables “orders” came out as {{ n.fanout_rows|int }}, {{ n.placed|int }} or {{ n.delivered|int }}: joins multiplied rows, and analysts used different definitions.</li>
+    <li><b>Now there is one number.</b> {{ n.net|int }} net orders (placed minus canceled and unavailable), with placed and delivered published under their own names. Five independent query paths agree, and a dbt test enforces it.</li>
+    <li><b>Trust is tested, not claimed.</b> {{ stats.data_tests + stats.unit_tests }} tests pass on every build, including {{ stats.known_issue_tests }} baselines that watch the {{ stats.dq_issues }} documented raw-data issues. CI runs on every pull request.</li>
+    <li><b>The marts answer real questions</b> (associations, not causes):
+      <ul>
+        <li>Late deliveries draw 1-2 star reviews {{ n.bad_late|pct }} of the time vs {{ n.bad_ok|pct }} on time.</li>
+        <li>Only {{ n.repeat|pct(2) }} of customers ever buy again on a different day.</li>
+        <li>The top 10% of sellers hold {{ n.top10|pct }} of net GMV.</li>
+        <li>Late seller handover goes with {{ n.hv_late|pct }} late deliveries vs {{ n.hv_ok|pct }}.</li>
+      </ul>
+    </li>
+  </ul>
+</section>
+
+<nav class="toc">
+  <p><b>Contents</b></p>
+  <ol>
+    <li><a href="#problem">The problem</a></li>
+    <li><a href="#data">Data</a></li>
+    <li><a href="#architecture">Architecture and modelling</a></li>
+    <li><a href="#quality">Data quality</a></li>
+    <li><a href="#tests">Tests and CI</a></li>
+    <li><a href="#result">The result: one order count</a></li>
+    <li><a href="#q1">Q1 Delivery and reviews</a></li>
+    <li><a href="#q2">Q2 Repeat purchase</a></li>
+    <li><a href="#q3">Q3 Seller performance</a></li>
+    <li><a href="#ops">Operations snapshot</a></li>
+    <li><a href="#recommendations">Recommendations</a></li>
+    <li><a href="#limitations">Limitations</a></li>
+    <li><a href="#reproduce">How to reproduce</a></li>
+  </ol>
+</nav>
+
+<h2 id="problem">1. The problem</h2>
+<div class="question">The Analytics Lead: “Three analysts got three different order counts, and the business no longer trusts our numbers. Build trusted, tested, documented marts so analysts query only marts, never raw.”</div>
+<div class="fig">{{ figs.three | safe }}</div>
+<ul>
+  <li><b>Analyst A</b> joined orders to items and payments before counting: one order with 3 items and 2 payments becomes 6 rows. The same query reports revenue of {{ n.fanout_revenue|brl }} against {{ n.paid|brl }} actually paid ({{ ((n.fanout_revenue / n.paid - 1) * 100)|pct(0) }} too high).</li>
+  <li><b>Analyst B</b> counted every order, including canceled and unavailable ones.</li>
+  <li><b>Analyst C</b> counted delivered orders only: a valid metric, but a different one under the same name.</li>
+</ul>
+<p>So there were two problems: <b>grain errors</b> (joins that multiply rows), solved by modelling and tests, and <b>definition drift</b> (one word, several meanings), solved by agreeing on named definitions.</p>
+
+<h2 id="data">2. Data</h2>
+<p>The Kaggle release <code>olistbr/brazilian-ecommerce</code>: 9 CSV files from a Brazilian marketplace, orders from 2016-09-04 to 2018-10-17. They are loaded unchanged (every column as text) into DuckDB by <code>ingestion/load_raw.py</code>, which records an audit of every file:</p>
+<div class="scroll">{{ tables.audit | safe }}</div>
+<p class="note">Reviews have more physical lines than rows (comments contain line breaks), so the loader records both counts. Raw files are never committed to the repository.</p>
+
+<h2 id="architecture">3. Architecture and modelling</h2>
+<div class="svgwrap">{{ architecture_svg | safe }}</div>
+<ul>
+  <li><b>staging</b> ({{ stats.models_by_layer['staging'] }} views): one per raw table; rename, cast, clean, de-duplicate. No joins.</li>
+  <li><b>intermediate</b> ({{ stats.models_by_layer['intermediate'] }} views): roll items, payments and reviews up to one row per order <i>before</i> joining, so nothing can fan out; order status and lifecycle logic; person-level customers.</li>
+  <li><b>marts</b>: a star schema (<code>fct_orders</code>, <code>fct_order_items</code>, <code>dim_customers</code>, <code>dim_products</code>, <code>dim_sellers</code>, <code>dim_date</code>) plus two wide tables (<code>customer_360</code>, <code>seller_scorecard</code>). Contracts are enforced and the marts are the only public layer.</li>
+  <li><b>Also included:</b> {{ stats.seeds }} seeds (the order-status definition among them), an SCD2 snapshot of order status, a semantic layer ({{ stats.metrics }} MetricFlow metrics), and {{ stats.exposures }} exposures (this app and the analyses).</li>
+</ul>
+{% if lineage_png %}<h3>Lineage as dbt docs draws it</h3><img class="shot" src="{{ lineage_png }}" alt="dbt docs lineage graph">{% endif %}
+<h3>Lineage of the main fact table</h3>
+<div class="fig">{{ figs.lineage | safe }}</div>
+<p>Key decisions are recorded as ADRs in <code>docs/adr/</code>:</p>
+<ul>
+  <li><b>0001</b> layered architecture;</li>
+  <li><b>0002</b> order status and net orders;</li>
+  <li><b>0003</b> grain, fan-out and customer identity;</li>
+  <li><b>0004</b> payments, cancellations and refunds;</li>
+  <li><b>0005</b> the incremental item fact.</li>
+</ul>
+
+<h2 id="quality">4. Data quality</h2>
+<div class="question">What is wrong with the raw data, how big is each problem, and what did we do about it?</div>
+<div class="fig">{{ figs.issues | safe }}</div>
+<div class="scroll">{{ tables.issues | safe }}</div>
+<div class="grid2">
+  <div class="fig">{{ figs.coverage | safe }}</div>
+  <div class="fig">{{ figs.lifecycle | safe }}</div>
+</div>
+<div class="fig">{{ figs.nulls | safe }}</div>
+<div class="fig">{{ figs.payments | safe }}</div>
+<p>Payments should equal items plus freight. At a R$1 tolerance, {{ n.mismatch|int }} of {{ n.mismatch_base|int }} orders differ; {{ n.mismatch_installments|int }} of them are card payments in installments, where the amount includes interest. GMV (items + freight) is therefore the revenue measure, and payments are kept as a separate measure (ADR 0004).</p>
+
+<h2 id="tests">5. Tests and CI</h2>
+<div class="kpis">
+  <div class="kpi"><div class="label">Tests passing</div><div class="value">{{ stats.tests_passed }} / {{ stats.data_tests + stats.unit_tests }}</div></div>
+  <div class="kpi"><div class="label">Known-issue baselines</div><div class="value">{{ stats.known_issue_tests }}</div></div>
+  <div class="kpi"><div class="label">Mart columns documented</div><div class="value">{{ stats.mart_columns_documented }} / {{ stats.mart_columns }}</div></div>
+  <div class="kpi"><div class="label">Models with contracts</div><div class="value">{{ stats.contracted_models }}</div></div>
+</div>
+<div class="grid2">
+  <div class="fig">{{ figs.tests_cat | safe }}</div>
+  <div class="fig">{{ figs.tests_layer | safe }}</div>
+</div>
+<h3>Known-issue baselines</h3>
+<p>A raw problem we cannot fix ourselves is a test that passes at today's count, warns if the count grows, and fails if it explodes. Failing rows are stored for inspection. CI plants every one of these issues in a synthetic dataset and checks that each test detects it.</p>
+<div class="scroll">{{ tables.known | safe }}</div>
+{% if inc %}
+<h3>Incremental model check</h3>
+<p><code>fct_order_items</code> is built incrementally. <code>scripts/check_incremental.py</code> loads the data as it looked on {{ inc.cutoff }}, then the full data:</p>
+<ul>
+  <li>The incremental run added the new orders and updated {{ inc.scenario_a.older_rows_whose_status_changed|int }} rows whose order changed status, {{ inc.scenario_a.of_which_outside_lookback_window|int }} of them older than the lookback window.</li>
+  <li>Running it again changed nothing, and a full rebuild produced an identical table (row-level checksum: {{ 'match' if inc.scenario_a.incremental_equals_full_refresh else 'MISMATCH' }}).</li>
+  <li>In the late-data scenario, {{ inc.scenario_b.rows_missed_by_incremental }} rows were missed by design. The grain test caught it, and a full refresh repaired it.</li>
+</ul>
+{% endif %}
+
+<h2 id="result">6. The result: one order count</h2>
+<div class="fig">{{ figs.paths | safe }}</div>
+<div class="scroll">{{ tables.named | safe }}</div>
+<p>The same check runs in every <code>dbt build</code>, in six variants including a path that bypasses all models (staging plus the status seed). A regression therefore fails CI before it reaches a report.</p>
+
+<h2 id="q1">7. Q1 · How do delivery time and lateness relate to bad reviews?</h2>
+<div class="question">Decision supported: where logistics improvements should start. Population: delivered orders with a delivery date and a review, complete months.</div>
+<div class="fig">{{ figs.q1a | safe }}</div>
+<div class="fig">{{ figs.q1b | safe }}</div>
+<div class="fig">{{ figs.q1c | safe }}</div>
+<ul>
+  <li><b>Late vs on time.</b> Late deliveries get a 1-2 star review {{ n.bad_late|pct }} of the time (95% CI {{ n.bad_late_lo|pct }}-{{ n.bad_late_hi|pct }}) vs {{ n.bad_ok|pct }} on time ({{ n.bad_ok_lo|pct }}-{{ n.bad_ok_hi|pct }}).</li>
+  <li><b>The jump is immediate.</b> It happens as soon as the parcel misses its estimate.</li>
+  <li><b>States.</b> Across {{ n.states_n }} states, late rate and bad-review rate correlate at r = {{ '%.2f'|format(n.corr) }}; lateness alone explains {{ (n.r2 * 100)|pct(0) }} of the spread. {{ n.worst_states }} are late most often. {{ n.excess_states }} have more bad reviews than their lateness predicts.</li>
+  <li><b>Caveat.</b> This is an association: remote states also differ in products, prices and carriers.</li>
+</ul>
+<div class="scroll">{{ tables.states | safe }}</div>
+
+<h2 id="q2">8. Q2 · What share of customers buy again, and how quickly?</h2>
+<div class="question">Decision supported: retention vs acquisition budget, and which first-order experiences to fix.</div>
+<div class="fig">{{ figs.q2a | safe }}</div>
+<div class="grid2">
+  <div class="fig">{{ figs.q2b | safe }}</div>
+  <div class="fig">{{ figs.q2d | safe }}</div>
+</div>
+<div class="fig">{{ figs.q2c | safe }}</div>
+<ul>
+  <li><b>Repeat buying is rare.</b> {{ n.repeat|pct(2) }} of customers ever buy again on a different day.</li>
+  <li><b>The definition matters.</b> Counting split checkouts as repeats would report {{ n.repeat_orders|pct(2) }}.</li>
+  <li><b>Return is slow.</b> Repeaters take a median of {{ '%.0f'|format(n.median_second) }} days.</li>
+  <li><b>Fair cohort comparison.</b> Cohorts are compared only once every customer has had the full window to return.</li>
+  <li><b>First experience.</b> Late or badly reviewed first orders go with lower repurchase, but the intervals are wide: a hypothesis to test, not a result.</li>
+</ul>
+
+<h2 id="q3">9. Q3 · How concentrated is GMV across sellers, and how do sellers differ?</h2>
+<div class="question">Decision supported: which sellers the seller-management team calls first.</div>
+<div class="grid2">
+  <div class="fig">{{ figs.q3a | safe }}</div>
+  <div class="fig">{{ figs.q3b | safe }}</div>
+</div>
+<div class="fig">{{ figs.q3c | safe }}</div>
+<ul>
+  <li><b>Concentration.</b> The top 5% / 10% / 20% of active sellers hold {{ n.top5|pct }} / {{ n.top10|pct }} / {{ n.top20|pct }} of net GMV.</li>
+  <li><b>Handover.</b> When a seller hands the parcel to the carrier after its own deadline, {{ n.hv_late|pct }} of orders arrive late vs {{ n.hv_ok|pct }} otherwise ({{ '%.1f'|format(n.hv_ratio) }}x; single-seller orders).</li>
+  <li><b>The call list.</b> {{ n.risk_sellers }} established sellers (50+ net orders) exceed both thresholds (late handover > 15%, bad reviews > 20%) and hold {{ n.risk_share|pct }} of marketplace GMV.</li>
+</ul>
+<div class="scroll">{{ tables.quadrants | safe }}</div>
+<div class="scroll">{{ tables.watchlist | safe }}</div>
+
+<h2 id="ops">10. Operations snapshot ({{ months[0] }} to {{ months[1] }})</h2>
+<div class="kpis">
+  <div class="kpi"><div class="label">Net orders</div><div class="value">{{ kpis.net_orders|int }}</div></div>
+  <div class="kpi"><div class="label">Net GMV</div><div class="value">{{ kpis.net_gmv_brl|brl }}</div></div>
+  <div class="kpi"><div class="label">Average order value</div><div class="value">{{ kpis.aov_brl|brl }}</div></div>
+  <div class="kpi"><div class="label">Late deliveries</div><div class="value">{{ (kpis.late_rate * 100)|pct }}</div></div>
+  <div class="kpi"><div class="label">Median delivery time</div><div class="value">{{ '%.0f'|format(kpis.median_delivery_days) }} days</div></div>
+  <div class="kpi"><div class="label">Average review</div><div class="value">{{ '%.2f'|format(kpis.avg_review_score) }}</div></div>
+</div>
+<div class="grid2">
+  <div class="fig">{{ figs.m_orders | safe }}</div>
+  <div class="fig">{{ figs.m_gmv | safe }}</div>
+  <div class="fig">{{ figs.m_late | safe }}</div>
+  <div class="fig">{{ figs.m_days | safe }}</div>
+</div>
+<div class="grid2">
+  <div class="fig">{{ figs.cats | safe }}</div>
+  <div class="fig">{{ figs.regions | safe }}</div>
+</div>
+<p class="note">The app's Dashboard page shows the same charts with filters for period and region.</p>
+
+<h2 id="recommendations">11. Recommendations</h2>
+<div class="scroll"><table class="data">
+<tr><th>Who</th><th>What</th><th>Expected impact</th><th>How we measure</th><th>Risk</th></tr>
+<tr><td>Analytics Lead + Finance</td><td>Adopt net orders as the headline order KPI; report placed and delivered under their own names</td><td>One order number in every report</td><td>Conflicting order counts in business reviews: zero; 5-path dbt test stays green</td><td>Finance may prefer delivered orders: a one-line change to the status seed</td></tr>
+<tr><td>Analysts</td><td>Query the marts only; retire raw-table queries and dashboards</td><td>No fan-out or definition errors</td><td>Share of dashboards reading marts</td><td>Migration effort for legacy reports</td></tr>
+<tr><td>Logistics</td><td>Start with the most-late states ({{ n.worst_states }}); review how estimated dates are set there</td><td>Fewer late deliveries and bad reviews there</td><td>Monthly late and bad-review rate by delivery state</td><td>Lateness may be structural (distance); estimates may need widening</td></tr>
+<tr><td>Seller management</td><td>Work the {{ n.risk_sellers }} sellers above both thresholds (handover SLA)</td><td>Lower late-handover and late-delivery rates</td><td><code>seller_scorecard.late_handover_rate</code> monthly, those sellers vs the rest</td><td>Thresholds are judgment calls; small sellers are noisy</td></tr>
+<tr><td>CRM</td><td>Test a second-purchase programme against a random holdout</td><td>A measured, not assumed, lift on a ~2% base</td><td>Repurchase within 90/180 days, treatment vs holdout</td><td>Low base rate needs a large sample</td></tr>
+<tr><td>Data platform</td><td>Ask the source owner for refunds, quantities and time zones</td><td>Net revenue and true unit counts</td><td>New source tables available and tested</td><td>Depends on the source team's roadmap</td></tr>
+</table></div>
+
+<h2 id="limitations">12. Limitations</h2>
+<ul>
+  <li><b>Historical data.</b> The data covers 2016 to 2018 from one marketplace, and only 2017-01 to 2018-08 is complete. Recency is measured against the last purchase date in the data.</li>
+  <li><b>Associations, not causes.</b> All business findings are associations. Experiments or holdouts are needed before acting at scale.</li>
+  <li><b>No refunds.</b> The source has no refund data, so revenue is gross merchandise value, not net revenue.</li>
+  <li><b>Synthetic CI data.</b> CI runs on a synthetic dataset with the same schema, because raw data cannot be committed. Full-volume validation is run locally (<code>make all</code>).</li>
+</ul>
+
+<h2 id="reproduce">13. How to reproduce</h2>
+<p>Download the 9 CSVs from Kaggle and point <code>OLIST_RAW_DIR</code> (or <code>config.yaml</code>) at the folder. Then run <code>uv sync</code>, <code>make all</code> and <code>uv run streamlit run dashboard/app.py</code>.</p>
+<p>Where things live:</p>
+<ul>
+  <li><code>dbt/</code> holds the models, tests, seeds and snapshot.</li>
+  <li><code>sql/</code> and <code>analyses/</code> hold standalone SQL.</li>
+  <li><code>notebooks/</code> holds three notebooks, exported to <code>reports/*.html</code>.</li>
+  <li><code>docs/</code> holds the request, metric definitions, data dictionary, DQ report, analyst guide and ADRs.</li>
+</ul>
+</main>
+</body>
+</html>

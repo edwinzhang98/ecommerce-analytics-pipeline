@@ -11,6 +11,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import re
 import shutil
 from collections import Counter
 from pathlib import Path
@@ -145,6 +146,24 @@ def export_issue_register(con: duckdb.DuckDBPyConnection, out: Path) -> pd.DataF
     return df
 
 
+def _test_target(node: dict, manifest: dict) -> dict | None:
+    """The model / source / seed / snapshot a test is attached to; None for cross-model singular tests."""
+    uid = node.get("attached_node")
+    if not uid:
+        kw_model = str(((node.get("test_metadata") or {}).get("kwargs") or {}).get("model", ""))
+        src = re.search(r"source\('(\w+)',\s*'(\w+)'\)", kw_model)
+        ref = re.search(r"ref\('(\w+)'\)", kw_model)
+        if src:
+            uid = f"source.olist_analytics.{src.group(1)}.{src.group(2)}"
+        elif ref:
+            uid = next((u for u, n in manifest["nodes"].items() if n.get("name") == ref.group(1)
+                        and n["resource_type"] in ("model", "seed", "snapshot")), None)
+        else:
+            deps = node["depends_on"]["nodes"]
+            uid = deps[0] if len(deps) == 1 else None
+    return manifest["nodes"].get(uid) or manifest["sources"].get(uid) if uid else None
+
+
 def export_test_results(con: duckdb.DuckDBPyConnection, artifacts: Path, out: Path) -> pd.DataFrame:
     manifest = json.loads((artifacts / "manifest.json").read_text())
     run_results = json.loads((artifacts / "run_results.json").read_text())
@@ -156,17 +175,15 @@ def export_test_results(con: duckdb.DuckDBPyConnection, artifacts: Path, out: Pa
             continue
         result = results.get(uid, {})
         if node["resource_type"] == "unit_test":
-            attached = node.get("model")
+            target = manifest["nodes"].get(f"model.olist_analytics.{node.get('model')}")
             kind, category, test_name = "unit", "unit test", node["name"]
         else:
-            attached_uid = node.get("attached_node") or next(iter(node["depends_on"]["nodes"]), "")
-            attached = attached_uid.split(".")[-1] if attached_uid else None
             meta = node.get("test_metadata") or {}
             kind = "generic" if meta else "singular"
             category, test_name = _test_category(node), meta.get("name", "singular")
-        attached_node = manifest["nodes"].get(f"model.olist_analytics.{attached}") or manifest["sources"].get(
-            node.get("attached_node") or "", {})
-        layer = _layer(attached_node.get("fqn", []), attached_node.get("resource_type", "model")) if attached_node else "cross-model"
+            target = _test_target(node, manifest)
+        attached = target["name"] if target else None
+        layer = _layer(target.get("fqn", []), target["resource_type"]) if target else "cross-model"
         config = node.get("config", {})
         failing_rows = None
         if config.get("store_failures"):
