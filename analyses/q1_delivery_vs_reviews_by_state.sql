@@ -7,6 +7,7 @@
 --            by_state         - per delivery state: delivery time, late rate, bad-review rate, and the
 --                               bad-review rate expected from its late rate alone
 --            state_correlation - how much of the state-to-state spread lateness explains
+-- Parameters: bad_review_max_score (2), min_orders_per_state (300), complete_months_only (true)
 -- Population: delivered orders with a delivery date AND a review; complete months by default.
 -- Caveat   : associations, not causal effects (e.g. remote states differ in many ways).
 -- Run      : uv run python scripts/run_sql.py analyses/q1_delivery_vs_reviews_by_state.sql

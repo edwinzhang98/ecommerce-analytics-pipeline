@@ -1,6 +1,7 @@
 -- =====================================================================================
 -- 02 Primary-key uniqueness of every raw table
--- Purpose : is the obvious key really unique? (Two are not: review_id, and order_id in reviews.)
+-- Purpose : is the obvious key really unique? review_id and order_id in reviews are not; customer_unique_id
+--           and the geolocation zip prefix repeat by design (a person, a postal area).
 -- Inputs  : raw.orders, raw.customers, raw.order_items, raw.order_payments, raw.order_reviews,
 --           raw.products, raw.sellers, raw.geolocation, raw.product_category_name_translation
 -- Output  : one row per (table, candidate key) with rows, distinct keys and duplicates

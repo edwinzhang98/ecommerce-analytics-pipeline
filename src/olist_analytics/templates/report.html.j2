@@ -52,7 +52,7 @@
   <strong>TL;DR</strong>
   <ul>
     <li><b>The problem was real and explainable.</b> On the raw tables “orders” came out as {{ n.fanout_rows|int }}, {{ n.placed|int }} or {{ n.delivered|int }}: joins multiplied rows, and analysts used different definitions.</li>
-    <li><b>Now there is one number.</b> {{ n.net|int }} net orders (placed minus canceled and unavailable), with placed and delivered published under their own names. Five independent query paths agree, and a dbt test enforces it.</li>
+    <li><b>Now there is one number.</b> {{ n.net|int }} net orders (placed minus canceled and unavailable), with placed and delivered published under their own names. Every query path through the marts agrees, and a six-path dbt test fails the build if that ever changes.</li>
     <li><b>Trust is tested, not claimed.</b> {{ stats.data_tests + stats.unit_tests }} tests pass on every build, including {{ stats.known_issue_tests }} baselines that watch the {{ stats.dq_issues }} documented raw-data issues. CI runs on every pull request.</li>
     <li><b>The marts answer real questions</b> (associations, not causes):
       <ul>
@@ -86,7 +86,7 @@
 
 <h2 id="problem">1. The problem</h2>
 <div class="question">The Analytics Lead: “Three analysts got three different order counts, and the business no longer trusts our numbers. Build trusted, tested, documented marts so analysts query only marts, never raw.”</div>
-<div class="fig">{{ figs.three | safe }}</div>
+<div class="fig" id="fig-three">{{ figs.three | safe }}</div>
 <ul>
   <li><b>Analyst A</b> joined orders to items and payments before counting: one order with 3 items and 2 payments becomes 6 rows. The same query reports revenue of {{ n.fanout_revenue|brl }} against {{ n.paid|brl }} actually paid ({{ ((n.fanout_revenue / n.paid - 1) * 100)|pct(0) }} too high).</li>
   <li><b>Analyst B</b> counted every order, including canceled and unavailable ones.</li>
@@ -107,6 +107,8 @@
   <li><b>marts</b>: a star schema (<code>fct_orders</code>, <code>fct_order_items</code>, <code>dim_customers</code>, <code>dim_products</code>, <code>dim_sellers</code>, <code>dim_date</code>) plus two wide tables (<code>customer_360</code>, <code>seller_scorecard</code>). Contracts are enforced and the marts are the only public layer.</li>
   <li><b>Also included:</b> {{ stats.seeds }} seeds (the order-status definition among them), an SCD2 snapshot of order status, a semantic layer ({{ stats.metrics }} MetricFlow metrics), and {{ stats.exposures }} exposures (this app and the analyses).</li>
 </ul>
+<h3>The star schema analysts query</h3>
+<div class="svgwrap">{{ star_svg | safe }}</div>
 {% if lineage_png %}<h3>Lineage as dbt docs draws it</h3><img class="shot" src="{{ lineage_png }}" alt="dbt docs lineage graph">{% endif %}
 <h3>Lineage of the main fact table</h3>
 <div class="fig">{{ figs.lineage | safe }}</div>
@@ -121,7 +123,7 @@
 
 <h2 id="quality">4. Data quality</h2>
 <div class="question">What is wrong with the raw data, how big is each problem, and what did we do about it?</div>
-<div class="fig">{{ figs.issues | safe }}</div>
+<div class="fig" id="fig-issues">{{ figs.issues | safe }}</div>
 <div class="scroll">{{ tables.issues | safe }}</div>
 <div class="grid2">
   <div class="fig">{{ figs.coverage | safe }}</div>
@@ -129,7 +131,7 @@
 </div>
 <div class="fig">{{ figs.nulls | safe }}</div>
 <div class="fig">{{ figs.payments | safe }}</div>
-<p>Payments should equal items plus freight. At a R$1 tolerance, {{ n.mismatch|int }} of {{ n.mismatch_base|int }} orders differ; {{ n.mismatch_installments|int }} of them are card payments in installments, where the amount includes interest. GMV (items + freight) is therefore the revenue measure, and payments are kept as a separate measure (ADR 0004).</p>
+<p>Payments should equal items plus freight. At a R$1 tolerance, {{ n.mismatch|int }} of {{ n.mismatch_base|int }} orders differ; {{ n.mismatch_installments|int }} of them are card payments in installments, which points to installment interest. GMV (items + freight) is therefore the revenue measure, and payments are kept as a separate measure (ADR 0004).</p>
 
 <h2 id="tests">5. Tests and CI</h2>
 <div class="kpis">
@@ -156,26 +158,26 @@
 {% endif %}
 
 <h2 id="result">6. The result: one order count</h2>
-<div class="fig">{{ figs.paths | safe }}</div>
+<div class="fig" id="fig-paths">{{ figs.paths | safe }}</div>
 <div class="scroll">{{ tables.named | safe }}</div>
-<p>The same check runs in every <code>dbt build</code>, in six variants including a path that bypasses all models (staging plus the status seed). A regression therefore fails CI before it reaches a report.</p>
+<p>The same check runs in every <code>dbt build</code>, with six paths, including one computed straight from staging and the status seed, skipping every intermediate and mart model. A regression therefore fails CI before it reaches a report.</p>
 
 <h2 id="q1">7. Q1 · How do delivery time and lateness relate to bad reviews?</h2>
 <div class="question">Decision supported: where logistics improvements should start. Population: delivered orders with a delivery date and a review, complete months.</div>
-<div class="fig">{{ figs.q1a | safe }}</div>
-<div class="fig">{{ figs.q1b | safe }}</div>
-<div class="fig">{{ figs.q1c | safe }}</div>
+<div class="fig" id="fig-q1a">{{ figs.q1a | safe }}</div>
+<div class="fig" id="fig-q1b">{{ figs.q1b | safe }}</div>
+<div class="fig" id="fig-q1c">{{ figs.q1c | safe }}</div>
 <ul>
   <li><b>Late vs on time.</b> Late deliveries get a 1-2 star review {{ n.bad_late|pct }} of the time (95% CI {{ n.bad_late_lo|pct }}-{{ n.bad_late_hi|pct }}) vs {{ n.bad_ok|pct }} on time ({{ n.bad_ok_lo|pct }}-{{ n.bad_ok_hi|pct }}).</li>
   <li><b>The jump is immediate.</b> It happens as soon as the parcel misses its estimate.</li>
-  <li><b>States.</b> Across {{ n.states_n }} states, late rate and bad-review rate correlate at r = {{ '%.2f'|format(n.corr) }}; lateness alone explains {{ (n.r2 * 100)|pct(0) }} of the spread. {{ n.worst_states }} are late most often. {{ n.excess_states }} have more bad reviews than their lateness predicts.</li>
+  <li><b>States.</b> Across {{ n.states_n }} states, late rate and bad-review rate correlate at r = {{ '%.2f'|format(n.corr) }}; lateness alone explains {{ (n.r2 * 100)|pct(0) }} of the spread. {{ n.worst_states }} are late most often. The 95% interval of {{ n.excess_states }} sits wholly above what their lateness predicts, and only RJ's excess survives once delivery time is also accounted for.</li>
   <li><b>Caveat.</b> This is an association: remote states also differ in products, prices and carriers.</li>
 </ul>
 <div class="scroll">{{ tables.states | safe }}</div>
 
 <h2 id="q2">8. Q2 · What share of customers buy again, and how quickly?</h2>
 <div class="question">Decision supported: retention vs acquisition budget, and which first-order experiences to fix.</div>
-<div class="fig">{{ figs.q2a | safe }}</div>
+<div class="fig" id="fig-q2a">{{ figs.q2a | safe }}</div>
 <div class="grid2">
   <div class="fig">{{ figs.q2b | safe }}</div>
   <div class="fig">{{ figs.q2d | safe }}</div>
@@ -184,7 +186,7 @@
 <ul>
   <li><b>Repeat buying is rare.</b> {{ n.repeat|pct(2) }} of customers ever buy again on a different day.</li>
   <li><b>The definition matters.</b> Counting split checkouts as repeats would report {{ n.repeat_orders|pct(2) }}.</li>
-  <li><b>Return is slow.</b> Repeaters take a median of {{ '%.0f'|format(n.median_second) }} days.</li>
+  <li><b>Return is slow.</b> Repeaters take a median of {{ '%.0f'|format(n.median_second) }} days, and that figure is biased toward quick returns. For the customers observed for a full year it is 125 days (<code>analyses/q2_repeat_purchase.md</code>).</li>
   <li><b>Fair cohort comparison.</b> Cohorts are compared only once every customer has had the full window to return.</li>
   <li><b>First experience.</b> Late or badly reviewed first orders go with lower repurchase, but the intervals are wide: a hypothesis to test, not a result.</li>
 </ul>
@@ -192,8 +194,8 @@
 <h2 id="q3">9. Q3 · How concentrated is GMV across sellers, and how do sellers differ?</h2>
 <div class="question">Decision supported: which sellers the seller-management team calls first.</div>
 <div class="grid2">
-  <div class="fig">{{ figs.q3a | safe }}</div>
-  <div class="fig">{{ figs.q3b | safe }}</div>
+  <div class="fig" id="fig-q3a">{{ figs.q3a | safe }}</div>
+  <div class="fig" id="fig-q3b">{{ figs.q3b | safe }}</div>
 </div>
 <div class="fig">{{ figs.q3c | safe }}</div>
 <ul>
@@ -214,7 +216,7 @@
   <div class="kpi"><div class="label">Average review</div><div class="value">{{ '%.2f'|format(kpis.avg_review_score) }}</div></div>
 </div>
 <div class="grid2">
-  <div class="fig">{{ figs.m_orders | safe }}</div>
+  <div class="fig" id="fig-m_orders">{{ figs.m_orders | safe }}</div>
   <div class="fig">{{ figs.m_gmv | safe }}</div>
   <div class="fig">{{ figs.m_late | safe }}</div>
   <div class="fig">{{ figs.m_days | safe }}</div>
@@ -228,11 +230,11 @@
 <h2 id="recommendations">11. Recommendations</h2>
 <div class="scroll"><table class="data">
 <tr><th>Who</th><th>What</th><th>Expected impact</th><th>How we measure</th><th>Risk</th></tr>
-<tr><td>Analytics Lead + Finance</td><td>Adopt net orders as the headline order KPI; report placed and delivered under their own names</td><td>One order number in every report</td><td>Conflicting order counts in business reviews: zero; 5-path dbt test stays green</td><td>Finance may prefer delivered orders: a one-line change to the status seed</td></tr>
+<tr><td>Analytics Lead + Finance</td><td>Adopt net orders as the headline order KPI; report placed and delivered under their own names</td><td>One order number in every report</td><td>Conflicting order counts in business reviews: zero; the 6-path dbt test stays green</td><td>Finance may prefer delivered orders: a status-seed change plus a full refresh (ADR 0002)</td></tr>
 <tr><td>Analysts</td><td>Query the marts only; retire raw-table queries and dashboards</td><td>No fan-out or definition errors</td><td>Share of dashboards reading marts</td><td>Migration effort for legacy reports</td></tr>
-<tr><td>Logistics</td><td>Start with the most-late states ({{ n.worst_states }}); review how estimated dates are set there</td><td>Fewer late deliveries and bad reviews there</td><td>Monthly late and bad-review rate by delivery state</td><td>Lateness may be structural (distance); estimates may need widening</td></tr>
-<tr><td>Seller management</td><td>Work the {{ n.risk_sellers }} sellers above both thresholds (handover SLA)</td><td>Lower late-handover and late-delivery rates</td><td><code>seller_scorecard.late_handover_rate</code> monthly, those sellers vs the rest</td><td>Thresholds are judgment calls; small sellers are noisy</td></tr>
-<tr><td>CRM</td><td>Test a second-purchase programme against a random holdout</td><td>A measured, not assumed, lift on a ~2% base</td><td>Repurchase within 90/180 days, treatment vs holdout</td><td>Low base rate needs a large sample</td></tr>
+<tr><td>Logistics</td><td>Review carriers and routes in RJ first (second-most late deliveries, and the one state with clearly more bad reviews than its lateness predicts); in {{ n.worst_states }} make the delivery estimate route-specific</td><td>Fewer late deliveries; at most ~53 fewer bad reviews per 100 late deliveries avoided (upper bound)</td><td>Monthly late and bad-review rate, RJ vs MG and SP; the Northeast before vs after</td><td>RJ does worse even on time; a later promise can cost sales</td></tr>
+<tr><td>Seller management</td><td>Work the {{ n.risk_sellers }} sellers above both thresholds, the 15 that clearly exceed both first</td><td>Lower late-handover rates</td><td>Their rates vs flagged sellers not yet contacted</td><td>Some flags are chance; 72% of late deliveries follow an on-time handover</td></tr>
+<tr><td>CRM</td><td>Pilot a second-purchase offer 30-90 days after the first delivery, with a random no-offer group</td><td>A measured, not assumed, lift on a ~2% base</td><td>180-day repeat rate, pilot vs no-offer group</td><td>A 2% base needs a large pilot</td></tr>
 <tr><td>Data platform</td><td>Ask the source owner for refunds, quantities and time zones</td><td>Net revenue and true unit counts</td><td>New source tables available and tested</td><td>Depends on the source team's roadmap</td></tr>
 </table></div>
 

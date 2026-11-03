@@ -390,7 +390,7 @@ models:
       - name: review_survey_sent_date
         description: >
           Date the satisfaction survey was sent (source column `review_creation_date`, whose time
-          part is always 00:00:00).
+          part is midnight, or 01:00 on daylight-saving start days).
         data_tests:
           - not_null
       - name: review_answered_at

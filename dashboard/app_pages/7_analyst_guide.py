@@ -2,6 +2,7 @@ import pandas as pd
 import streamlit as st
 
 import components as ui
+from olist_analytics import charts
 
 ui.require_cache()
 ui.header(
@@ -26,6 +27,9 @@ guide = pd.DataFrame([
     ("Calendar, holidays, complete months", "dim_date", "one row per day", "year_month, is_complete_data_month"),
 ], columns=["question", "table", "grain", "key columns"])
 st.dataframe(guide, hide_index=True, use_container_width=True)
+
+st.subheader("The star schema")
+st.markdown(charts.star_schema_svg(ui.stats().get("mart_rows")), unsafe_allow_html=True)
 
 st.subheader("How to join")
 st.markdown("""
@@ -54,7 +58,7 @@ with dont:
 - Don't join `fct_order_items` and then count orders or sum order amounts: that is the fan-out that started this.
 - Don't call delivered orders "orders": say *delivered orders*.
 - Don't count reviews by `review_id`: one answer can cover several orders. Review metrics are per order.
-- Don't use `payment_total_brl` as revenue. It includes card interest; GMV is the revenue measure.
+- Don't use `payment_total_brl` as revenue. It most likely includes card interest; GMV is the revenue measure.
 """)
 
 st.subheader("Try it: query the marts")
@@ -87,6 +91,14 @@ if st.button("Run query", type="primary"):
         result = ui.con().execute(sql).df()
         st.dataframe(result.head(500), hide_index=True, use_container_width=True)
         st.caption(f"{len(result):,} rows" + (" (first 500 shown)" if len(result) > 500 else ""))
+        # quick look: chart the first numeric column against the first label column
+        labels = [c for c in result.columns if not pd.api.types.is_numeric_dtype(result[c])]
+        values = [c for c in result.columns if pd.api.types.is_numeric_dtype(result[c])]
+        if labels and values and 1 < len(result) <= 40:
+            ui.chart(charts.horizontal_bars(result.head(40), labels[0], values[0],
+                                            f"{values[0]} by {labels[0]} (query result)", values[0],
+                                            subtitle="Auto-chart of the query result: first label vs first number.",
+                                            height=max(300, 26 * len(result) + 140)), key="playground")
     except Exception as exc:  # show the analyst the database error as-is
         st.error(f"Query failed: {exc}")
 st.caption("Runs against a read-only copy of the marts held by this app. Full column definitions: "
@@ -94,6 +106,10 @@ st.caption("Runs against a read-only copy of the marts held by this app. Full co
 
 ui.how_to_read("""
 **This page is the short version of `docs/analyst_guide.md`.**
+
+- **The diagram** is the star schema. Blue tables are facts (events: orders, items sold). White tables describe
+  them (customers, products, sellers, dates). A line is a join key, and every join goes from many rows to one, so it
+  cannot multiply rows.
 
 - **The first table** maps everyday questions to the one mart that answers them, and states its *grain*: what one
   row means. Most wrong numbers come from forgetting the grain.

@@ -2,7 +2,7 @@
 -- Q2. What share of customers buy again, and how quickly?
 -- Decision : whether retention (CRM) or acquisition should get the next marketing euro, and
 --            which first-order experiences go with lower repurchase (CRM manager).
--- Inputs   : marts.fct_orders, marts.dim_customers, marts.customer_360
+-- Inputs   : marts.fct_orders, marts.customer_360
 -- Output   : definition_sensitivity     - repeat rate under 3 definitions (why the official one;
 --                                         the per-order customer_id trap is shown on raw in
 --                                         sql/metrics/03_customer_key_trap_on_raw.sql)

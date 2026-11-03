@@ -36,7 +36,7 @@ The second problem is solved by agreeing on definitions, not by code. The first 
 1. **What is an order, and which count is official?** Define *placed*, *net* and *delivered* orders, the date basis (purchase timestamp, local time) and the exclusions. Publish all three under distinct names. → `docs/02_metric_definitions.md`, ADR 0002
 2. **Can the marts be trusted?** Every raw-data issue is found, quantified, handled and documented, and every mart's grain is guaranteed by tests. → `docs/data_quality_report.md`, `docs/03_data_quality_checks.md`
 3. **Do the marts support real analysis without touching raw?** Answer three business questions from marts only:
-   - Q1. How do delivery time and lateness relate to bad reviews, by customer state?
+   - Q1. How do delivery time and lateness relate to bad reviews, by delivery state (the order's delivery address)?
    - Q2. What share of customers buy again, and how quickly?
    - Q3. How concentrated is GMV across sellers, and how do sellers differ on handover SLA and review outcomes?
 4. **Can analysts self-serve?** They need to know which table answers which question, how to join, and what not to do. → `docs/analyst_guide.md`, `docs/data_dictionary.md`
@@ -47,7 +47,7 @@ The second problem is solved by agreeing on definitions, not by code. The first 
 |---|---|---|---|
 | Adopt "net orders" as the single headline order KPI | Analytics Lead, with Finance sign-off | Before the next monthly business review | If Finance books revenue on delivery, the headline would switch to delivered orders. That is one seed change (ADR 0002). |
 | Retire raw-table access for analysts (marts only) | Analytics Lead | After analysts have used the marts for one reporting cycle | Any recurring question the marts cannot answer goes onto the marts backlog before raw access is removed. |
-| Accept the known data-quality baselines (e.g. 387 orders whose payments ≠ items + freight) | Analytics Lead and source owner (Olist platform team) | With this release | If a baseline grows, the warn/error tests fire and the source owner is engaged. |
+| Accept the known data-quality baselines (e.g. 249 orders whose payments differ from items + freight by more than R$1) | Analytics Lead and source owner (Olist platform team) | With this release | If a baseline grows, the warn/error tests fire and the source owner is engaged. |
 
 ## In scope
 - EL from the 9 CSV files into DuckDB (`raw`), with a load audit

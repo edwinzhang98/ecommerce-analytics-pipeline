@@ -1,6 +1,6 @@
 {#
     dim_customers — one row per person (customer_unique_id), including people whose only
-    orders were canceled or unavailable. Carries RFM inputs (ADR 0003):
+    orders were canceled or unavailable. Carries RFM inputs (docs/02_metric_definitions.md):
       R = recency_days, F = frequency_orders, M = monetary_gmv_brl
     Recency is measured against the last net-order purchase date in the data (rfm_reference_date),
     because the extract is historical: "today" would make every customer look lost.

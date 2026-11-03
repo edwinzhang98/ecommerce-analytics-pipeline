@@ -74,7 +74,7 @@ right-hand panel says what an analyst should keep in mind.
 looks like a customer key but is issued per order. Counting customers with it says nobody ever buys twice.
 
 **The payment slider** is a live check. Customers' payments should equal what they bought (items + freight). A
-handful of orders differ, mostly because card payments split into installments include interest. Move the
+handful of orders differ, mostly card payments split into installments, which most likely include interest. Move the
 tolerance and watch how many orders fail. At R$1 it is 249 orders out of 98,665 (0.25%). That is the baseline the
 automated test watches.
 

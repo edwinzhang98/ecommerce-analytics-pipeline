@@ -45,8 +45,9 @@ st.subheader("3 · The result: every path gives the same number")
 q0 = analysis.q0_order_count_reconciliation(ui.con())
 ui.chart(charts.query_paths(q0["query_paths"]))
 ui.table_view(q0["named_order_metrics"], "Table view: the three named order metrics (allowed to differ, each has its own name)")
-st.caption("The same five-path check runs in every `dbt build` "
-           "(`tests/singular/assert_net_order_count_consistent_across_query_paths.sql`), so a regression fails CI.")
+st.caption("A stricter six-path version of this check (one path skips every intermediate and mart model) runs in "
+           "every `dbt build` (`tests/singular/assert_net_order_count_consistent_across_query_paths.sql`), "
+           "so a regression fails CI.")
 
 ui.how_to_read("""
 **The first chart** shows four answers to "how many orders did we have?". Each was computed from the raw tables

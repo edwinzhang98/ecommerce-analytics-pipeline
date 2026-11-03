@@ -3,7 +3,7 @@
 The real Olist files are not committed (raw data stays outside the repo, and CI has no
 Kaggle credentials), so CI runs the full pipeline on this fixture instead. It has:
   * the same 9 files, columns, quoting style and text types as the Kaggle release
-  * ~2,900 orders spread over 2016-09..2018-10 with realistic status mix, timings, multi-item
+  * 2,955 orders spread over 2016-09..2018-10 with realistic status mix, timings, multi-item
     and multi-payment orders, repeat customers and split checkouts
   * at least one planted instance of every documented raw-data issue that has a known-issue
     test (shared review_ids, multiple reviews, untranslated / missing categories, dirty seller

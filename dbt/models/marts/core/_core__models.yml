@@ -456,7 +456,7 @@ models:
     description: >
       **One row per person (`customer_unique_id`)** (96,096 rows), including the 1,100+ people
       whose only orders were canceled or unavailable. Location comes from the person's most
-      recent order. Carries the RFM inputs: **R = `recency_days`, F = `frequency_orders`,
+      recent net order (or most recent order when there is none). Carries the RFM inputs: **R = `recency_days`, F = `frequency_orders`,
       M = `monetary_gmv_brl`** (net orders only), measured against `rfm_reference_date`, the
       last net-order purchase date in the data.
     config:
@@ -586,6 +586,7 @@ models:
         owner: analytics-engineering
     data_tests:
       - row_count_matches:
+          name: dim_products_has_one_row_per_product
           arguments:
             compare_model: ref('stg_olist__products')
     columns:
@@ -648,6 +649,7 @@ models:
         owner: analytics-engineering
     data_tests:
       - row_count_matches:
+          name: dim_sellers_has_one_row_per_seller
           arguments:
             compare_model: ref('stg_olist__sellers')
     columns:
@@ -708,6 +710,7 @@ models:
         owner: analytics-engineering
     data_tests:
       - is_continuous_date_spine:
+          name: dim_date_has_one_row_per_day
           arguments:
             column_name: date_day
     columns:

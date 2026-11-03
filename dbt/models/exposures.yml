@@ -25,12 +25,14 @@ exposures:
     type: analysis
     maturity: high
     description: >
-      Three standalone SQL analyses in the repo's `analyses/` folder, answered from the marts only:
-      delivery vs reviews by state, repeat purchase, and seller performance.
+      Four standalone SQL analyses in the repo's `analyses/` folder, answered from the marts only:
+      the order-count reconciliation (Q0), delivery vs reviews by state (Q1), repeat purchase (Q2)
+      and seller performance (Q3).
     depends_on:
       - ref('fct_orders')
       - ref('fct_order_items')
       - ref('dim_customers')
+      - ref('dim_date')
       - ref('customer_360')
       - ref('seller_scorecard')
     owner:

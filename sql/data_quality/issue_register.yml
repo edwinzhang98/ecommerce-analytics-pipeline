@@ -18,8 +18,8 @@ issues:
     detail: >
       99,441 customer_ids map 1:1 to orders, but belong to 96,096 people (customer_unique_id).
       Counting customers or repeat buyers on customer_id gives a 0% repeat rate.
-    handling: dim_customers and customer_360 are keyed on customer_unique_id; facts carry both keys.
-    downstream: Always count people with customer_unique_id. customer_id is for traceability only.
+    handling: dim_customers and customer_360 are keyed on customer_unique_id; the facts carry customer_unique_id, and the per-order customer_id is not exposed in the marts.
+    downstream: Count people with customer_unique_id, the only customer key in the marts.
     dbt_tests: [dim_customers_has_one_row_per_person, unique_dim_customers_customer_unique_id]
 
   - id: DQ-02
@@ -52,11 +52,11 @@ issues:
     class: Keys, identity & grain
     table: order_items
     title: No quantity column; one row per unit
-    count_sql: select count(*) from (select order_id from raw.order_items group by order_id, product_id having count(*) > 1)
+    count_sql: select count(distinct order_id) from (select order_id from raw.order_items group by order_id, product_id having count(*) > 1)
     unit: orders with the same product on 2+ rows
     detail: >
-      Buying 3 units of a product creates 3 rows (order_item_id 1..3). 7,088 orders contain the
-      same product more than once.
+      Buying 3 units of a product creates 3 rows (order_item_id 1..3). 6,968 orders contain the
+      same product on more than one row (7,088 order-product pairs).
     handling: fct_order_items keeps one row per unit; quantity = count of rows.
     downstream: Count units with count(*) on fct_order_items; count orders with count(distinct order_id).
     dbt_tests: [dbt_utils_unique_combination_of_columns_fct_order_items_order_id__order_item_id]
@@ -86,8 +86,9 @@ issues:
       geolocation_lng, geolocation_city, geolocation_state from raw.geolocation)) from raw.geolocation
     unit: exact duplicate rows
     detail: >
-      1,000,163 rows for 19,015 zip prefixes; 261,831 rows are exact duplicates. A naive join on
-      zip prefix multiplies every customer by ~50 rows.
+      1,000,163 rows for 19,015 zip prefixes (53 per prefix on average); 261,831 rows are exact
+      duplicates. A naive join on zip prefix multiplies each customer record by about 150 rows on
+      average, because customers live in the densest prefixes.
     handling: Staging de-duplicates; int_geolocation_aggregated_to_zip_prefixes keeps one median point per prefix.
     downstream: Use the latitude / longitude on dim_customers and dim_sellers. Never join raw geolocation.
     dbt_tests: [unique_stg_olist__geolocation_geolocation_key, unique_int_geolocation_aggregated_to_zip_prefixes_zip_code_prefix]
@@ -143,7 +144,9 @@ issues:
       select count(*) from raw.geolocation where not (geolocation_lat::double between -34.0 and 5.5
       and geolocation_lng::double between -74.5 and -28.5)
     unit: rows outside the Brazil bounding box
-    detail: Points in Europe, North America or at (0, 0); latitude up to 45 and longitude up to +9.
+    detail: >
+      31 rows (27 distinct points) fall outside a box around Brazil: points in Argentina, North
+      America, Europe and Asia (latitude -36.6 to 45.1, longitude -101.5 to 121.1).
     handling: Excluded before the per-prefix median (is_within_brazil).
     downstream: None; already removed from dim coordinates.
     dbt_tests: [known_issue__geolocation_points_outside_brazil]
@@ -232,13 +235,14 @@ issues:
     table: order_payments
     title: Payments do not equal items + freight
     count_sql: >
-      select count(*) from (select i.order_id, sum(i.price::double + i.freight_value::double) v from raw.order_items i group by 1) i
-      join (select order_id, sum(payment_value::double) p from raw.order_payments group by 1) p using (order_id)
+      select count(*) from (select order_id, sum(price::decimal(10, 2) + freight_value::decimal(10, 2)) v from raw.order_items group by 1) i
+      join (select order_id, sum(payment_value::decimal(10, 2)) p from raw.order_payments group by 1) p using (order_id)
       where abs(p - v) > 1
     unit: orders off by more than R$1
     detail: >
       303 orders differ by more than 1 cent and 249 by more than R$1. 229 of the 232 orders
-      overpaid by more than R$1 are card payments in installments: the amount includes interest.
+      overpaid by more than R$1 are card payments in installments, which points to installment
+      interest (the source does not record interest).
       Net effect: payments exceed items + freight by R$2,870 (0.02%).
     handling: >
       GMV (items + freight) is the revenue measure; payments are kept separately
@@ -257,8 +261,9 @@ issues:
     unit: seller city values needing cleaning
     detail: >
       Sellers typed the state into the city ("sao paulo - sp", "pinhais/pr"), a zip code, an e-mail
-      address or just "sp". The geolocation file has 2,044 redundant spellings of city names
-      (accents, double spaces, mojibake such as "sa£o paulo").
+      address or just "sp". The geolocation file spells city names 8,011 distinct ways, which
+      collapse to 5,957 after cleaning (accents, double spaces, state suffixes, mojibake such as
+      "sa£o paulo").
     handling: >
       Macro clean_city_name (lower-case, strip accents and suffixes, null when unusable); the 7
       unusable seller cities are inferred from the zip prefix (dim_sellers.is_city_inferred_from_zip).

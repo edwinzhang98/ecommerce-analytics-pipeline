@@ -115,7 +115,7 @@ cannot change silently) and `access: public`. Amounts are BRL; timestamps are lo
 
 ## dim_customers
 
-**One row per person (`customer_unique_id`)** (96,096 rows), including the 1,100+ people whose only orders were canceled or unavailable. Location comes from the person's most recent order. Carries the RFM inputs: **R = `recency_days`, F = `frequency_orders`, M = `monetary_gmv_brl`** (net orders only), measured against `rfm_reference_date`, the last net-order purchase date in the data.
+**One row per person (`customer_unique_id`)** (96,096 rows), including the 1,100+ people whose only orders were canceled or unavailable. Location comes from the person's most recent net order (or most recent order when there is none). Carries the RFM inputs: **R = `recency_days`, F = `frequency_orders`, M = `monetary_gmv_brl`** (net orders only), measured against `rfm_reference_date`, the last net-order purchase date in the data.
 
 - **Grain:** one row per person (customer_unique_id)
 - **Rows:** 96,096
@@ -155,7 +155,7 @@ cannot change silently) and `access: public`. Amounts are BRL; timestamps are lo
 - **Rows:** 32,951
 - **Update:** Full rebuild on every `dbt build` (`make build`).
 - **Built from:** product_category_translation_overrides, stg_olist__product_category_translation, stg_olist__products
-- **Model-level tests:** row_count_matches_dim_products_ref_stg_olist__products_
+- **Model-level tests:** dim_products_has_one_row_per_product
 - **Source:** [`dbt/models/marts/core/dim_products.sql`](../dbt/models/marts/core/dim_products.sql)
 
 | column | type | description | tests |
@@ -181,7 +181,7 @@ cannot change silently) and `access: public`. Amounts are BRL; timestamps are lo
 - **Rows:** 3,095
 - **Update:** Full rebuild on every `dbt build` (`make build`).
 - **Built from:** brazil_states, int_geolocation_aggregated_to_zip_prefixes, stg_olist__sellers
-- **Model-level tests:** row_count_matches_dim_sellers_ref_stg_olist__sellers_
+- **Model-level tests:** dim_sellers_has_one_row_per_seller
 - **Source:** [`dbt/models/marts/core/dim_sellers.sql`](../dbt/models/marts/core/dim_sellers.sql)
 
 | column | type | description | tests |
@@ -204,7 +204,7 @@ cannot change silently) and `access: public`. Amounts are BRL; timestamps are lo
 - **Rows:** 1,096
 - **Update:** Full rebuild on every `dbt build` (`make build`).
 - **Built from:** brazil_national_holidays
-- **Model-level tests:** is_continuous_date_spine_dim_date_date_day
+- **Model-level tests:** dim_date_has_one_row_per_day
 - **Source:** [`dbt/models/marts/core/dim_date.sql`](../dbt/models/marts/core/dim_date.sql)
 
 | column | type | description | tests |
@@ -254,7 +254,7 @@ cannot change silently) and `access: public`. Amounts are BRL; timestamps are lo
 | `purchase_days` | integer | Distinct calendar days with a net order. Used for repeat status because one checkout can be split into several orders in the same second. |  |
 | `has_net_order` | boolean | True when the person has at least one net order (not canceled or unavailable). |  |
 | `is_repeat_customer` | boolean | True when the person bought on at least 2 different days (net orders). |  |
-| `rfm_reference_date` | date | The "today" used for recency, i.e. the last purchase date in the data (the extract is historical). |  |
+| `rfm_reference_date` | date | The "today" used for recency, i.e. the last net-order purchase date in the data (the extract is historical). |  |
 | `recency_days` | integer | RFM recency: days from the last net order to `rfm_reference_date`. Null without net orders. |  |
 | `frequency_orders` | integer | RFM frequency: number of net orders. |  |
 | `monetary_gmv_brl` | decimal(18,2) | RFM monetary: GMV (items + freight) of the person's net orders, in BRL. |  |

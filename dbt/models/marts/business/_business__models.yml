@@ -73,7 +73,7 @@ models:
     description: True when the person bought on at least 2 different days (net orders).
     data_type: boolean
   - name: rfm_reference_date
-    description: The "today" used for recency, i.e. the last purchase date in the data (the extract is historical).
+    description: The "today" used for recency, i.e. the last net-order purchase date in the data (the extract is historical).
     data_type: date
   - name: recency_days
     description: 'RFM recency: days from the last net order to `rfm_reference_date`. Null without net orders.'

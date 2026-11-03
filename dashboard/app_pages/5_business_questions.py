@@ -62,14 +62,17 @@ with q1_tab:
     ui.chart(charts.q1_late_vs_on_time(q1["late_vs_on_time"], bad_max), key="q1a")
     ui.chart(charts.q1_by_delay(q1["by_delay"], bad_max), key="q1b")
     ui.chart(charts.q1_states(q1["by_state"], q1["late_vs_on_time"]), key="q1c")
-    worst = q1["by_state"].sort_values("excess_vs_expected_pp", ascending=False).head(3)
+    states = q1["by_state"]
+    clear = states[states["ci_low_pct"] > states["expected_bad_review_rate_pct"]]["delivery_state"].tolist()
     st.markdown(
         f"**Reading.** Late deliveries get a bad review **{late_rate / ok_rate:.1f}x** as often as on-time ones. "
         f"Across states, lateness tracks bad reviews closely (r = {corr['corr_late_rate_vs_bad_review_rate']:.2f}). "
         "The dotted line shows the bad-review rate each state would have if only its lateness differed. "
-        f"States above it ({', '.join(worst['delivery_state'])}) have more bad reviews than their lateness predicts, "
-        "so something besides lateness is going on there. This is an association: remote states also differ in "
-        "products, prices and carriers.")
+        + (f"States whose whole 95% interval sits above it: {', '.join(clear)}. " if clear else
+           "No state's 95% interval sits clearly above it. ")
+        + "In the full analysis only RJ's excess survives once delivery time is also accounted for, which is why "
+        "logistics should start there (analyses/q1_delivery_vs_reviews_by_state.md). This is an association: "
+        "states also differ in distance, products, prices and carriers.")
     ui.table_view(q1["by_state"], "Table view: by delivery state")
     show_sql("q1_delivery_vs_reviews_by_state.sql")
 

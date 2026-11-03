@@ -1,6 +1,7 @@
 """Render the generated parts of the docs from the single sources of truth.
 
 * docs/data_dictionary.md        <- dbt manifest + catalog (descriptions, types, tests, grain, materialization)
+* docs/images/architecture.svg   <- the pipeline diagram with live counts (same as the app and report)
 * docs/data_quality_report.md    <- the issue-register table between the BEGIN/END issue_register markers,
                                     from sql/data_quality/issue_register.yml with counts from the cache
 
@@ -127,6 +128,12 @@ def main() -> int:
     catalog_path = artifacts / "catalog.json"
     catalog = json.loads(catalog_path.read_text()) if catalog_path.exists() else {"nodes": {}}
     stats = json.loads((settings.cache_dir / "project_stats.json").read_text())
+
+    from olist_analytics.charts import architecture_svg
+    svg = REPO_ROOT / "docs" / "images" / "architecture.svg"
+    svg.parent.mkdir(parents=True, exist_ok=True)
+    svg.write_text(architecture_svg(stats).replace('width="100%"', 'width="1100"'), encoding="utf-8")
+    print(f"wrote {svg.relative_to(REPO_ROOT)}")
 
     dictionary = REPO_ROOT / "docs" / "data_dictionary.md"
     dictionary.write_text(render_data_dictionary(manifest, catalog, stats), encoding="utf-8")

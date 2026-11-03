@@ -1,5 +1,6 @@
 # One-command pipeline:
-#   make all  =  setup -> load (EL) -> dbt build (models + tests) -> dbt docs -> cache -> notebooks -> report
+#   make all  =  setup -> load (EL) -> dbt build (models + tests) -> dbt docs -> incremental check
+#                -> cache -> notebooks -> report
 # Then:  make dashboard   (or: uv run streamlit run dashboard/app.py)
 # Every target runs inside the uv-managed virtualenv. `make help` lists them.
 SHELL := /bin/bash
@@ -20,7 +21,7 @@ endif
 help:  ## List targets
 	@grep -E '^[a-zA-Z_-]+:.*?## ' $(MAKEFILE_LIST) | awk 'BEGIN {FS = ":.*?## "}; {printf "  %-18s %s\n", $$1, $$2}'
 
-all: setup load build docs cache notebooks report  ## Full pipeline: raw CSVs -> marts -> tests -> docs -> app cache -> report
+all: setup load build docs incremental-check cache notebooks report  ## Full pipeline: raw CSVs -> marts -> tests -> docs -> app cache -> report
 	@echo "Done. Start the app with: make dashboard"
 
 setup:  ## Create the virtualenv (uv) and install dbt packages

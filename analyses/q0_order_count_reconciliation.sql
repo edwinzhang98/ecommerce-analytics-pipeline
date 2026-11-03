@@ -4,6 +4,7 @@
 --           through the marts by different query paths, must return the same net order count.
 --           (The same check runs in every `dbt build`:
 --            dbt/tests/singular/assert_net_order_count_consistent_across_query_paths.sql)
+-- Decision: adopt one official order KPI (net orders) for every report (Analytics Lead + Finance).
 -- Inputs  : marts.fct_orders, marts.fct_order_items, marts.dim_customers, marts.customer_360, marts.dim_date
 -- Output  : result `query_paths`: one row per path with the net orders it returns
 --           result `named_order_metrics`: the three official order metrics, which are allowed to differ

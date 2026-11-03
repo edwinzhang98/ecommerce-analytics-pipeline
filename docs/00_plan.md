@@ -1,7 +1,8 @@
 # 00 — Project plan (one page)
 
-**Owner:** Analytics Engineering · **Stakeholder:** Analytics Lead · **Consumers:** 3 analysts + business teams (ops, CRM, seller management)
+**Owner:** Analytics Engineering · **Stakeholder:** Analytics Lead · **Consumers:** 3 analysts + business teams (ops, CRM, seller management, Finance for the order KPI sign-off)
 **Written:** 2026-11-03, before any modelling work. Decisions taken without a sync are marked *(decided)* with the reason.
+*Updated after delivery (2026-11-03): factual drift corrected in place (7 intermediate models, 4 unit tests, the 249-order payment baseline, delivery state in Q1); the semantic layer (2 semantic models, 11 MetricFlow metrics), the SCD2 snapshot `snp_olist__orders`, 2 exposures and the `dbt_project_evaluator` lint were added beyond this plan.*
 
 ## Problem
 Three analysts report three different order counts, so the business has stopped trusting our numbers. The deliverable is a set of tested, documented marts that become the only place analysts query. Raw tables become off-limits.
@@ -13,7 +14,7 @@ The first profiling pass found these issues to design for:
 - `customer_id` is per order. The person is `customer_unique_id`: 96,096 people.
 - `review_id` is not unique.
 - Geolocation has ~1M rows for 19k zip prefixes, including points outside Brazil.
-- 387 orders whose payments do not equal items + freight.
+- 249 orders whose payments differ from items + freight by more than R$1 (303 by more than one cent).
 - 1,359 orders handed to the carrier before they were approved.
 - 610 products have no category.
 
@@ -23,7 +24,7 @@ The first profiling pass found these issues to design for:
 | Layer | Models (planned) |
 |---|---|
 | staging | 9 `stg_olist__*` views, one per source table |
-| intermediate | `int_order_items_aggregated_to_orders`, `int_payments_pivoted_to_orders`, `int_reviews_deduplicated_to_orders`, `int_orders_joined`, `int_geolocation_aggregated_to_zip_prefixes`, `int_customers_aggregated_to_persons` |
+| intermediate | `int_order_items_aggregated_to_orders`, `int_payments_pivoted_to_orders`, `int_reviews_deduplicated_to_orders`, `int_orders_joined`, `int_orders_classified` (status and lifecycle logic), `int_geolocation_aggregated_to_zip_prefixes`, `int_customers_aggregated_to_persons` |
 | marts/core | `fct_orders`, `fct_order_items` (incremental), `dim_customers` (with RFM fields), `dim_products`, `dim_sellers`, `dim_date` |
 | marts/business | `customer_360`, `seller_scorecard` |
 | seeds | order-status mapping, Brazilian states/regions, missing category translations, national holidays |
@@ -33,12 +34,12 @@ The first profiling pass found these issues to design for:
 2. **Contracts at the edges.** Staging gets PK, not-null, accepted-values and relationship tests. Marts have enforced dbt model contracts.
 3. **Known source issues as baselines.** Each documented raw issue gets a test that passes at today's known count, warns if it grows, and errors if it explodes.
 4. **Modelling integrity.** Grain and fan-out guards, plus reconciliation across marts. The order count must agree in `fct_orders`, `fct_order_items` and `customer_360`.
-5. **Unit tests** for the trickiest logic: late-delivery flag, review de-duplication, city cleaning.
+5. **Unit tests** for the trickiest logic: late-delivery and status flags, review de-duplication, primary payment type, city cleaning.
 6. **Data quality report**: every issue with its impact, how it is handled, and what downstream users should watch.
 
 ## Analysis outline (proof that the marts support analysis)
 - **Q0 — the request itself.** Reproduce the three conflicting order counts from raw. Show that the marts give one answer by any query path.
-- **Q1 — delivery and reviews by state.** How do delivery time and lateness relate to bad-review rate, by customer state? Reported as an association with intervals, not a causal effect.
+- **Q1 — delivery and reviews by state.** How do delivery time and lateness relate to bad-review rate, by delivery state (the order's delivery address)? Reported as an association with intervals, not a causal effect.
 - **Q2 — repeat purchase.** Repeat rate at person level, by first-purchase cohort and repeat window. Includes the sensitivity of the definition: orders vs checkouts vs purchase days.
 - **Q3 — seller performance.** GMV concentration, seller handover SLA vs carrier delay, and review outcomes by seller.
 

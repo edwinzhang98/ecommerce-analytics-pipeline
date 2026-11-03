@@ -97,6 +97,37 @@ def shoot_lineage() -> None:
     print("  dbt_lineage.png")
 
 
+REPORT_FIGURES = {
+    "fig-three": "chart_three_analysts", "fig-paths": "chart_query_paths", "fig-q1a": "chart_q1_late_vs_on_time",
+    "fig-q1c": "chart_q1_states", "fig-q2a": "chart_q2_definitions", "fig-q3a": "chart_q3_pareto",
+    "fig-q3b": "chart_q3_handover",
+}
+
+
+def shoot_report_figures() -> None:
+    """Cut the README's key charts out of reports/report.html, so they are identical to the report and app."""
+    report = REPO_ROOT / "reports" / "report.html"
+    if not report.exists():
+        print("  skipped report charts: run `make report` first")
+        return
+    with sync_playwright() as p:
+        browser = p.chromium.launch()
+        page = browser.new_page(viewport={"width": 1100, "height": 1200}, device_scale_factor=2)
+        page.goto(report.as_uri())
+        page.wait_for_timeout(3000)
+        # full-width figures for the README: collapse the report's two-column grids, let plotly re-layout
+        page.add_style_tag(content=".grid2 { grid-template-columns: 1fr !important; }")
+        page.evaluate("window.dispatchEvent(new Event('resize'))")
+        page.wait_for_timeout(1500)
+        for element_id, name in REPORT_FIGURES.items():
+            element = page.locator(f"#{element_id}")
+            element.scroll_into_view_if_needed()
+            page.wait_for_timeout(300)
+            element.screenshot(path=str(OUT / f"{name}.png"))
+            print(f"  {name}.png")
+        browser.close()
+
+
 def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     parser.add_argument("--url", help="Use an app that is already running instead of starting one.")
@@ -114,6 +145,8 @@ def main() -> int:
     try:
         print("dbt docs lineage:")
         shoot_lineage()
+        print("report charts:")
+        shoot_report_figures()
         print("app pages:")
         errors = shoot_app(url)
     finally:

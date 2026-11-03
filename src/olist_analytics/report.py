@@ -107,7 +107,8 @@ def build() -> Path:
         "corr": corr["corr_late_rate_vs_bad_review_rate"], "r2": corr["r_squared_late_rate"],
         "states_n": int(corr["states_included"]),
         "worst_states": ", ".join(q1["by_state"].sort_values("late_rate_pct", ascending=False).head(3)["delivery_state"]),
-        "excess_states": ", ".join(q1["by_state"].sort_values("excess_vs_expected_pp", ascending=False).head(3)["delivery_state"]),
+        "excess_states": ", ".join(q1["by_state"].loc[q1["by_state"]["ci_low_pct"] > q1["by_state"]["expected_bad_review_rate_pct"],
+                                                    "delivery_state"]),
         "repeat": official["repeat_rate_pct"], "repeat_orders": defs["repeat_rate_pct"].max(),
         "median_second": q2["time_to_second_purchase"]["median_days_all_repeaters"].iloc[0],
         "top10": tiers.loc[10], "top5": tiers.loc[5], "top20": tiers.loc[20],
@@ -151,6 +152,7 @@ def build() -> Path:
         plotly_js=get_plotlyjs(),
         figs={k: fig_html(v) for k, v in figures.items()},
         architecture_svg=charts.architecture_svg(stats),
+        star_svg=charts.star_schema_svg(stats.get("mart_rows")),
         lineage_png=image_data_uri(REPO_ROOT / "docs" / "images" / "dbt_lineage.png"),
         tables={
             "audit": table_html(audit[["table_name", "physical_data_lines", "parsed_rows", "expected_rows", "reconciles"]],

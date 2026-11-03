@@ -8,6 +8,7 @@ app and the report draw identical charts.
 from __future__ import annotations
 
 import math
+import textwrap
 
 import pandas as pd
 import plotly.graph_objects as go
@@ -46,19 +47,25 @@ TEMPLATE = go.layout.Template(
 )
 
 
+SUBTITLE_WRAP = 74   # characters per subtitle line: fits a half-width column without clipping
+
+
 def _finish(fig: go.Figure, title: str, subtitle: str | None = None, height: int = 380,
             legend: bool | None = None) -> go.Figure:
-    """Title (with unit) + one-sentence conclusion as subtitle, consistent sizing."""
+    """Title (with unit) + one-sentence conclusion as subtitle, consistent sizing.
+    Plotly does not wrap subtitles, so long ones are wrapped here and the top margin grows with them."""
+    lines = textwrap.wrap(subtitle or "", SUBTITLE_WRAP) or [""]
+    extra = 18 * (len(lines) - 1)
     fig.update_layout(
         template=TEMPLATE,
-        height=height,
-        title=dict(text=title, subtitle=dict(text=subtitle or "", font=dict(color=INK_2, size=13))),
+        height=height + extra,
+        title=dict(text=title, subtitle=dict(text="<br>".join(lines), font=dict(color=INK_2, size=13))),
+        margin=dict(t=84 + extra),
     )
     if legend is not None:
         fig.update_layout(showlegend=legend)
     if legend:
-        fig.update_layout(margin=dict(t=110))
-        fig.update_layout(legend=dict(y=1.02))
+        fig.update_layout(margin=dict(t=110 + extra), legend=dict(y=1.02))
     return fig
 
 
@@ -184,6 +191,54 @@ def architecture_svg(stats: dict) -> str:
     )
 
 
+def star_schema_svg(rows: dict | None = None) -> str:
+    """The marts as a star schema: tables (with grain and row count) and the only joins analysts need."""
+    rows = rows or {}
+    boxes = {
+        "fct_order_items": (410, 24, "one row per unit sold", True),
+        "dim_products": (40, 24, "one row per product", False),
+        "dim_sellers": (780, 24, "one row per seller", False),
+        "fct_orders": (410, 214, "one row per order", True),
+        "dim_customers": (40, 214, "one row per person", False),
+        "dim_date": (780, 214, "one row per day", False),
+        "customer_360": (40, 360, "wide: one row per person", False),
+        "seller_scorecard": (780, 120, "wide: one row per seller", False),
+    }
+    w, h = 250, 62
+    def centre(name):
+        x, y, *_ = boxes[name]
+        return x + w / 2, y + h / 2
+    edges = [("fct_order_items", "fct_orders", "order_id"), ("fct_order_items", "dim_products", "product_id"),
+             ("fct_order_items", "dim_sellers", "seller_id"), ("fct_orders", "dim_customers", "customer_unique_id"),
+             ("fct_orders", "dim_date", "order_purchase_date = date_day")]
+    soft = [("dim_customers", "customer_360"), ("dim_sellers", "seller_scorecard")]
+    parts = []
+    for a, b, label in edges:
+        (x1, y1), (x2, y2) = centre(a), centre(b)
+        parts.append(f'<line x1="{x1}" y1="{y1}" x2="{x2}" y2="{y2}" stroke="{MUTED}" stroke-width="1.5"/>')
+        mx, my = (x1 + x2) / 2, (y1 + y2) / 2
+        parts.append(f'<rect x="{mx - len(label) * 3.6 - 6}" y="{my - 11}" width="{len(label) * 7.2 + 12}" height="20" '
+                     f'rx="4" fill="{SURFACE}"/>')
+        parts.append(f'<text x="{mx}" y="{my + 4}" text-anchor="middle" font-size="12" fill="{INK_2}">{label}</text>')
+    for a, b in soft:
+        (x1, y1), (x2, y2) = centre(a), centre(b)
+        parts.append(f'<line x1="{x1}" y1="{y1}" x2="{x2}" y2="{y2}" stroke="{AXIS}" stroke-width="1.5" '
+                     f'stroke-dasharray="4 4"/>')
+    for name, (x, y, grain, is_fact) in boxes.items():
+        fill, stroke = ("#eef4fc", BLUE) if is_fact else ("#ffffff", AXIS)
+        n = rows.get(name)
+        sub = f"{grain} · {n:,} rows" if n else grain
+        parts.append(f'<rect x="{x}" y="{y}" width="{w}" height="{h}" rx="8" fill="{fill}" stroke="{stroke}" stroke-width="1.5"/>'
+                     f'<text x="{x + w / 2}" y="{y + 26}" text-anchor="middle" font-size="15" font-weight="600" fill="{INK}">{name}</text>'
+                     f'<text x="{x + w / 2}" y="{y + 46}" text-anchor="middle" font-size="12" fill="{INK_2}">{sub}</text>')
+    font = FONT.replace(chr(34), chr(39))
+    return (f'<svg viewBox="0 0 1070 440" width="100%" role="img" xmlns="http://www.w3.org/2000/svg" '
+            f'aria-label="Star schema of the marts with join keys" style="font-family:{font};max-width:1070px">'
+            + "".join(parts) +
+            f'<text x="40" y="436" font-size="12" fill="{MUTED}">Solid lines: joins (many rows to one). '
+            f'Dashed: wide tables at the same grain as their dimension. Blue: facts.</text></svg>')
+
+
 # ----------------------------------------------------------------------------- raw data issues
 def issues_by_class(issues: pd.DataFrame) -> go.Figure:
     d = issues.groupby("class", sort=False).size().reset_index(name="issues").iloc[::-1]
@@ -255,7 +310,7 @@ def payment_mismatch_curve(curve: pd.DataFrame, tolerance: float, at: dict) -> g
     share = 100 * at["mismatched_orders"] / max(at["orders_with_items_and_payments"], 1)
     return _finish(fig, "Orders whose payments differ from items + freight (orders)",
                    f"At R${tolerance:g}: {fmt_int(at['mismatched_orders'])} orders ({share:.2f}%); "
-                   f"{fmt_int(at['overpaid_in_installments'])} are card payments in installments (interest).",
+                   f"{fmt_int(at['overpaid_in_installments'])} are card payments in installments (most likely interest).",
                    height=380, legend=False)
 
 
@@ -440,8 +495,9 @@ def q1_states(df: pd.DataFrame, national: pd.DataFrame | None = None) -> go.Figu
                                  name="expected from lateness alone", hoverinfo="skip"))
     size = 8 + 22 * (df["reviewed_deliveries"] / df["reviewed_deliveries"].max()) ** 0.5
     # label selectively: the most-late states and the biggest markets; the rest are on hover
+    clear_excess = df.loc[df["ci_low_pct"] > df["expected_bad_review_rate_pct"], "delivery_state"]
     notable = set(df.nlargest(5, "late_rate_pct")["delivery_state"]) | set(
-        df.nlargest(3, "reviewed_deliveries")["delivery_state"]) | set(df.nlargest(2, "excess_vs_expected_pp")["delivery_state"])
+        df.nlargest(3, "reviewed_deliveries")["delivery_state"]) | set(clear_excess)
     labels = [s if s in notable else "" for s in df["delivery_state"]]
     fig.add_trace(go.Scatter(
         x=df["late_rate_pct"], y=df["bad_review_rate_pct"], mode="markers+text", text=labels,
@@ -490,7 +546,8 @@ def q2_time_to_second(df: pd.DataFrame) -> go.Figure:
     median = df["median_days_all_repeaters"].iloc[0]
     within_90 = df.loc[df["bucket_order"] == 3, "cumulative_share_pct"].iloc[0]
     return _finish(fig, "Time from first to second purchase day (% of repeat customers)",
-                   f"Median {median:.0f} days; {within_90:.0f}% of repeaters return within 90 days.",
+                   f"Median {median:.0f} days, {pct(within_90)} within 90 days. Biased toward quick returns: recent "
+                   "customers have only had time to return fast.",
                    height=360, legend=False)
 
 
@@ -545,13 +602,13 @@ def q3_pareto(curve: pd.DataFrame, tiers: pd.DataFrame) -> go.Figure:
     t = tiers[tiers["top_pct_of_sellers"].isin([5, 10, 20])]
     fig.add_trace(go.Scatter(x=t["top_pct_of_sellers"], y=t["gmv_share_pct"], mode="markers+text",
                              marker=dict(size=9, color=ORANGE, line=dict(color=SURFACE, width=2)),
-                             text=[f"top {a}% → {b:.0f}%" for a, b in zip(t["top_pct_of_sellers"], t["gmv_share_pct"])],
+                             text=[f"top {a}% → {pct(b)}" for a, b in zip(t["top_pct_of_sellers"], t["gmv_share_pct"])],
                              textposition="bottom right", textfont=dict(color=INK), name="tiers", hoverinfo="skip"))
     fig.update_xaxes(title="share of active sellers, largest first (%)", range=[0, 100])
     fig.update_yaxes(title="share of net GMV (%)", range=[0, 102])
     top10 = tiers.loc[tiers["top_pct_of_sellers"] == 10, "gmv_share_pct"].iloc[0]
     return _finish(fig, "How concentrated is GMV? (cumulative % of net GMV)",
-                   f"The top 10% of sellers hold {top10:.0f}% of GMV: seller management can focus on a short list.",
+                   f"The top 10% of sellers hold {pct(top10)} of net GMV: seller management can focus on a short list.",
                    height=400, legend=False)
 
 
@@ -570,8 +627,8 @@ def q3_handover(df: pd.DataFrame) -> go.Figure:
     late = d[d["handover"].str.contains("late")].iloc[0]
     ok = d[d["handover"].str.contains("on time")].iloc[0]
     return _finish(fig, "Late delivery rate by the seller's handover to the carrier (%)",
-                   f"When the seller misses its shipping deadline, {late.late_delivery_rate_pct:.0f}% of orders arrive late "
-                   f"vs {ok.late_delivery_rate_pct:.0f}% otherwise (single-seller orders).", height=250, legend=False)
+                   f"When the seller misses its shipping deadline, {pct(late.late_delivery_rate_pct)} of orders arrive late "
+                   f"vs {pct(ok.late_delivery_rate_pct)} otherwise (single-seller orders).", height=250, legend=False)
 
 
 def q3_quadrants(points: pd.DataFrame, late_threshold: float, bad_threshold: float) -> go.Figure:
@@ -647,8 +704,8 @@ def region_split(df: pd.DataFrame) -> go.Figure:
     se = df.set_index("region")
     sub = ""
     if "Northeast" in se.index:
-        sub = (f"The Northeast has {se.loc['Northeast', 'customers_pct']:.0f}% of customers but "
-               f"{se.loc['Northeast', 'sellers_pct']:.0f}% of sellers: its parcels travel far.")
+        sub = (f"The Northeast has {pct(se.loc['Northeast', 'customers_pct'])} of customers but "
+               f"{pct(se.loc['Northeast', 'sellers_pct'])} of sellers: most of its parcels come from other regions.")
     return _finish(fig, "Where customers and sellers are (% by macro-region)", sub, height=360, legend=True)
 
 
