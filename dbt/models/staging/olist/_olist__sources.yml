@@ -1,0 +1,14 @@
+sources:
+  - name: olist
+    description: >
+      Raw extract of the Olist marketplace (Kaggle `olistbr/brazilian-ecommerce`), landed as-is
+      by `ingestion/load_raw.py`. Every column is VARCHAR; typing and cleaning happen in staging.
+    schema: raw
+    tables:
+      - name: orders
+        description: One row per order placed on the marketplace, in any status.
+        columns:
+          - name: order_id
+            data_tests:
+              - unique
+              - not_null

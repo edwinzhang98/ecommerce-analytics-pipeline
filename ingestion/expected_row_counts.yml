@@ -1,0 +1,12 @@
+# Parsed row counts of the Kaggle release (olistbr/brazilian-ecommerce) as downloaded
+# and validated on 2026-11-03. A full load fails if any table parses differently.
+# Note: order_reviews has 104,719 physical lines but 99,224 rows (comments contain line breaks).
+orders: 99441
+order_items: 112650
+customers: 99441
+order_payments: 103886
+order_reviews: 99224
+products: 32951
+sellers: 3095
+geolocation: 1000163
+product_category_name_translation: 71

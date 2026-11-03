@@ -1,0 +1,29 @@
+# --- data: never commit raw or derived data ---
+data/
+*.duckdb
+*.duckdb.wal
+*.parquet
+*.csv
+!dbt/seeds/*.csv
+ci/fixture/
+
+# --- dbt ---
+dbt/target/
+dbt/dbt_packages/
+dbt/logs/
+logs/
+
+# --- python ---
+.venv/
+__pycache__/
+*.pyc
+.ipynb_checkpoints/
+.pytest_cache/
+
+# --- env / secrets ---
+.env
+
+# --- os / editor ---
+.DS_Store
+.idea/
+.vscode/

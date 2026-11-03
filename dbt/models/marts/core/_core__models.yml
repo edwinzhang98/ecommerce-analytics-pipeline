@@ -1,0 +1,9 @@
+models:
+  - name: fct_orders
+    description: One row per order (skeleton).
+    columns:
+      - name: order_id
+        description: Primary key of an order.
+        data_tests:
+          - unique
+          - not_null

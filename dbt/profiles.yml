@@ -1,0 +1,13 @@
+# Repo-local profile: run dbt with `--profiles-dir .` from this folder (the Makefile does).
+# DUCKDB_PATH defaults to the same file the Python code uses (data/warehouse/olist.duckdb).
+olist_analytics:
+  target: dev
+  outputs:
+    dev:
+      type: duckdb
+      path: "{{ env_var('DUCKDB_PATH', '../data/warehouse/olist.duckdb') }}"
+      threads: 4
+    ci:
+      type: duckdb
+      path: "{{ env_var('DUCKDB_PATH', '../data/warehouse/ci.duckdb') }}"
+      threads: 4

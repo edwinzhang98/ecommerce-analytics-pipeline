@@ -1,0 +1,9 @@
+models:
+  - name: stg_olist__orders
+    description: One row per order. Typed, renamed copy of `raw.orders`.
+    columns:
+      - name: order_id
+        description: Primary key of an order.
+        data_tests:
+          - unique
+          - not_null

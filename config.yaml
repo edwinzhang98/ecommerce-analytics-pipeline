@@ -1,0 +1,13 @@
+# Project configuration. Every path can be overridden with an environment
+# variable (or a `.env` file in the repo root, see `.env.example`).
+# Relative paths are resolved from the repository root.
+
+# Folder that holds the 9 Olist CSV files from Kaggle (olistbr/brazilian-ecommerce).
+# Override with OLIST_RAW_DIR.
+raw_data_dir: ~/projects/data-projects/datasets/p7-olist
+
+# DuckDB warehouse file. Override with DUCKDB_PATH.
+duckdb_path: data/warehouse/olist.duckdb
+
+# Parquet / JSON cache read by the Streamlit app and the HTML report. Override with CACHE_DIR.
+cache_dir: data/cache
