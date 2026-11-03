@@ -10,7 +10,8 @@ Design choices (see docs/adr/0001-layered-architecture.md):
     fails loudly if the parsed row count differs from `expected_row_counts.yml`.
   * `--cutoff-date` loads only orders purchased before that date (plus their
     child rows). It simulates an earlier extract so the incremental model can be
-    demonstrated (see scripts/check_incremental.py).
+    demonstrated (see scripts/check_incremental.py). `--hold-back-orders N`
+    additionally leaves out N older orders, to simulate records that arrive late.
 
 Usage:
     uv run python ingestion/load_raw.py
@@ -71,7 +72,8 @@ def read_csv_sql(path: Path) -> str:
     return f"read_csv('{path.as_posix()}', header = true, all_varchar = true)"
 
 
-def load(raw_dir: Path, db_path: Path, expected_file: Path | None, cutoff_date: str | None) -> list[dict]:
+def load(raw_dir: Path, db_path: Path, expected_file: Path | None, cutoff_date: str | None,
+         hold_back_orders: int = 0) -> list[dict]:
     missing = [f for f in SOURCE_FILES.values() if not (raw_dir / f).exists()]
     if missing:
         raise FileNotFoundError(
@@ -98,6 +100,22 @@ def load(raw_dir: Path, db_path: Path, expected_file: Path | None, cutoff_date: 
             where try_cast(order_purchase_timestamp as timestamp) < date '{cutoff_date}'
             """
         )
+        if hold_back_orders:
+            # Late-arriving records: drop N orders purchased 30-60 days before the cutoff,
+            # i.e. well outside the incremental lookback window. Deterministic choice.
+            con.execute(
+                f"""
+                delete from _orders_in_scope
+                where order_id in (
+                    select order_id
+                    from {read_csv_sql(raw_dir / SOURCE_FILES['orders'])}
+                    where try_cast(order_purchase_timestamp as timestamp)
+                        between date '{cutoff_date}' - interval 60 day and date '{cutoff_date}' - interval 30 day
+                    order by md5(order_id)
+                    limit {int(hold_back_orders)}
+                )
+                """
+            )
 
     audit_rows: list[dict] = []
     for table, file_name in SOURCE_FILES.items():
@@ -168,12 +186,17 @@ def main() -> int:
                         help="YAML with expected row counts per table (checked on full loads only).")
     parser.add_argument("--cutoff-date", default=None,
                         help="Only load orders purchased before this ISO date (simulates an earlier extract).")
+    parser.add_argument("--hold-back-orders", type=int, default=0,
+                        help="With --cutoff-date: also leave out N orders from 30-60 days before the cutoff "
+                             "(simulates late-arriving records).")
     args = parser.parse_args()
 
     print(f"Loading raw CSVs from {args.raw_dir}\n  -> {args.duckdb_path} (schema raw)")
     if args.cutoff_date:
-        print(f"  partial load: orders purchased before {args.cutoff_date}")
-    rows = load(args.raw_dir.expanduser(), args.duckdb_path.expanduser(), args.expected, args.cutoff_date)
+        print(f"  partial load: orders purchased before {args.cutoff_date}"
+              + (f", holding back {args.hold_back_orders} older orders" if args.hold_back_orders else ""))
+    rows = load(args.raw_dir.expanduser(), args.duckdb_path.expanduser(), args.expected, args.cutoff_date,
+                args.hold_back_orders)
 
     print(f"\n{'table':36s} {'rows':>10s} {'expected':>10s} {'file lines':>11s}  status")
     for r in rows:

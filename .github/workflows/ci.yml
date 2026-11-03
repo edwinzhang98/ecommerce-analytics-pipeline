@@ -1,0 +1,85 @@
+# CI for the dbt project: runs on every pull request and on pushes to main.
+#
+# The real Olist files are not in the repo, so CI generates a synthetic fixture with the same
+# schema (ci/make_fixture.py) and runs the full pipeline on it:
+#   parse (deprecations are errors) -> load -> dbt build (models, data tests, unit tests,
+#   contracts) -> incremental-vs-full-refresh check -> docs generate.
+# Full-volume validation on the real data runs locally (`make all`).
+name: ci
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  dbt-build:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    env:
+      DUCKDB_PATH: ${{ github.workspace }}/data/warehouse/ci.duckdb
+      CACHE_DIR: ${{ github.workspace }}/data/cache
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up uv and Python
+        uses: astral-sh/setup-uv@v6
+        with:
+          python-version: "3.12"
+          enable-cache: true
+
+      - name: Install dependencies (locked)
+        run: uv sync --frozen
+
+      - name: dbt deps
+        working-directory: dbt
+        run: uv run dbt deps --profiles-dir .
+
+      - name: dbt parse (deprecation warnings fail the build)
+        working-directory: dbt
+        run: uv run dbt --warn-error parse --profiles-dir . --target ci --no-partial-parse --show-all-deprecations
+
+      - name: Generate synthetic fixture
+        run: uv run python ci/make_fixture.py --out ci/fixture
+
+      - name: EL - load fixture into DuckDB (raw schema, load audit)
+        run: >
+          uv run python ingestion/load_raw.py
+          --raw-dir ci/fixture
+          --expected ci/fixture/expected_row_counts.yml
+          --duckdb-path "$DUCKDB_PATH"
+
+      - name: dbt build (seeds, models, data tests, unit tests, contracts)
+        working-directory: dbt
+        run: >
+          uv run dbt build --profiles-dir . --target ci
+          --vars '{min_net_orders_per_complete_month: 50}'
+
+      - name: Incremental model check (incremental == full refresh; late data is caught)
+        run: >
+          uv run python scripts/check_incremental.py
+          --raw-dir ci/fixture
+          --expected ci/fixture/expected_row_counts.yml
+          --db data/warehouse/ci_incremental.duckdb
+          --out data/cache/incremental_check_ci.json
+
+      - name: dbt docs generate
+        working-directory: dbt
+        run: uv run dbt docs generate --profiles-dir . --target ci --static
+
+      - name: Upload dbt artifacts
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: dbt-artifacts
+          path: |
+            dbt/target/manifest.json
+            dbt/target/run_results.json
+            dbt/target/static_index.html
+            data/cache/incremental_check_ci.json
+          if-no-files-found: warn
